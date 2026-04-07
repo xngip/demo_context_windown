@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Multimodal Context Demo</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div>
+          <h1>Multimodal Demo</h1>
+          <p>Lịch sử cuộc hội thoại</p>
+        </div>
+        <button id="newChatBtn" class="primary-btn">+ Chat mới</button>
+      </div>
+      <div id="conversationList" class="conversation-list"></div>
+    </aside>
+
+    <main class="chat-panel">
+      <header class="chat-header">
+        <div>
+          <h2 id="conversationTitle">Chọn một cuộc hội thoại</h2>
+          <p id="conversationMeta">Tạo chat mới hoặc chọn lịch sử bên trái</p>
+        </div>
+        <button id="refreshBtn" class="ghost-btn">Làm mới</button>
+      </header>
+
+      <section id="messageList" class="message-list empty-state">
+        <div>
+          <h3>Chưa có tin nhắn</h3>
+          <p>Hãy bắt đầu bằng một câu hỏi hoặc tải ảnh lên để demo quản lý ngữ cảnh đa phương thức.</p>
+        </div>
+      </section>
+
+      <section id="previewBar" class="preview-bar hidden"></section>
+
+      <form id="chatForm" class="composer">
+        <div class="composer-row">
+          <textarea id="messageInput" placeholder="Nhập câu hỏi... ví dụ: so sánh ảnh này với dashboard hôm qua" rows="3"></textarea>
+        </div>
+        <div class="composer-row composer-actions">
+          <label class="upload-btn">
+            <input id="imageInput" type="file" accept="image/*" multiple />
+            <span>Chọn ảnh</span>
+          </label>
+          <div class="actions-right">
+            <button type="button" id="memoryBtn" class="ghost-btn">Xem memory</button>
+            <button type="submit" id="sendBtn" class="primary-btn">Gửi</button>
+          </div>
+        </div>
+      </form>
+    </main>
+  </div>
+
+  <dialog id="memoryDialog" class="memory-dialog">
+    <div class="memory-dialog-inner">
+      <div class="memory-dialog-header">
+        <h3>Memory Snapshot</h3>
+        <button id="closeMemoryBtn" class="ghost-btn">Đóng</button>
+      </div>
+      <pre id="memoryContent"></pre>
+    </div>
+  </dialog>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
