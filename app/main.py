@@ -2,13 +2,13 @@ from pathlib import Path
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, ORJSONResponse
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse, ORJSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy.orm import Session
+from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
 
 from app.config import get_settings
-from app.db import get_db, init_db
+from app.db import init_db
 from app.schemas import (
     ChatResponse,
     ConversationCreateResponse,
@@ -21,7 +21,7 @@ from app.services.chat_service import ChatService
 settings = get_settings()
 app = FastAPI(
     title='Multimodal Context Window Demo',
-    version='1.1.0',
+    version='2.1.0',
     default_response_class=ORJSONResponse,
 )
 service = ChatService()
@@ -52,14 +52,14 @@ def healthcheck() -> dict:
 
 
 @app.get('/conversations', response_model=ConversationListResponse)
-def list_conversations(db: Session = Depends(get_db)):
-    return ConversationListResponse(conversations=service.list_conversations(db))
+def list_conversations():
+    return ConversationListResponse(conversations=service.list_conversations())
 
 
 @app.get('/conversations/{conversation_id}', response_model=ConversationDetailResponse)
-def get_conversation(conversation_id: UUID, db: Session = Depends(get_db)):
+def get_conversation(conversation_id: UUID):
     try:
-        detail = service.get_conversation_detail(db, conversation_id)
+        detail = service.get_conversation_detail(conversation_id)
         return ConversationDetailResponse(**detail)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -68,9 +68,8 @@ def get_conversation(conversation_id: UUID, db: Session = Depends(get_db)):
 @app.post('/conversations', response_model=ConversationCreateResponse)
 def create_conversation(
     title: Annotated[str | None, Form()] = None,
-    db: Session = Depends(get_db),
 ):
-    convo = service.create_conversation(db, title=title)
+    convo = service.create_conversation(title=title)
     return ConversationCreateResponse(
         conversation_id=convo.id,
         title=convo.title,
@@ -83,7 +82,6 @@ async def chat(
     conversation_id: UUID,
     text: Annotated[str | None, Form()] = None,
     images: Annotated[list[UploadFile] | None, File()] = None,
-    db: Session = Depends(get_db),
 ):
     uploads = []
     for image in images or []:
@@ -95,7 +93,7 @@ async def chat(
             }
         )
     try:
-        result = service.process_chat(db, conversation_id, text, uploads)
+        result = await run_in_threadpool(service.process_chat, conversation_id, text, uploads)
         return ChatResponse(**result)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -103,7 +101,34 @@ async def chat(
         raise HTTPException(status_code=500, detail=f'Internal error: {exc}') from exc
 
 
+@app.post('/conversations/{conversation_id}/chat/stream')
+async def chat_stream(
+    conversation_id: UUID,
+    text: Annotated[str | None, Form()] = None,
+    images: Annotated[list[UploadFile] | None, File()] = None,
+):
+    uploads = []
+    for image in images or []:
+        uploads.append(
+            {
+                'filename': image.filename,
+                'mime_type': image.content_type,
+                'content': await image.read(),
+            }
+        )
+    stream = service.process_chat_stream(conversation_id, text, uploads)
+    return StreamingResponse(
+        iterate_in_threadpool(stream),
+        media_type='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'X-Accel-Buffering': 'no',
+        },
+    )
+
+
 @app.get('/conversations/{conversation_id}/memory', response_model=MemorySnapshotResponse)
-def memory_snapshot(conversation_id: UUID, db: Session = Depends(get_db)):
-    snapshot = service.memory.snapshot(db, conversation_id)
+def memory_snapshot(conversation_id: UUID):
+    snapshot = service.memory_snapshot(conversation_id)
     return MemorySnapshotResponse(conversation_id=conversation_id, **snapshot)

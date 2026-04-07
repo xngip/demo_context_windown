@@ -6,14 +6,14 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8', extra='ignore')
 
     gemini_api_key: str
-    database_url: str = 'postgresql+psycopg://demo:demo@localhost:5432/multimodal_memory'
+    database_url: str = 'postgresql+psycopg://demo:demo@localhost:5434/multimodal_memory'
     app_host: str = '0.0.0.0'
     app_port: int = 8000
     debug: bool = True
     timezone: str = 'Asia/Bangkok'
     upload_dir: str = './data/uploads'
 
-    generation_model: str = 'gemini-2.5-flash'
+    generation_model: str = 'gemini-3.1-flash-lite-preview'
     embedding_model: str = 'gemini-embedding-2-preview'
     embedding_dim: int = 768
     max_recent_turns: int = 10

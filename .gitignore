@@ -1,36 +1,26 @@
-# Python
+.env
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+config/local.env
+venv/
+.venv/
 __pycache__/
-*.py[cod]
+*.pyc
 *.pyo
 *.pyd
-
-# Virtual environment
-.venv/
-venv/
-env/
-
-# Environment variables
+*.log
+*.sqlite3
+*.db
+*.sqlite
+*.db3
+*.sqlite3-journal
+*.db-journal
+*.sqlite3-shm
+*.sqlite3-wal
+.env.docker
 .env
-.env.*
-!.env.example
-
-# IDE
-.vscode/
-.idea/
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Python tooling
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-
-# Build / dist
-build/
-dist/
-*.egg-info/
-
-# Local uploads / runtime data
-data/uploads/
+.env.example
+data/

@@ -32,6 +32,9 @@ class ChatResponse(BaseModel):
     resolved_references: list[dict[str, Any]] = Field(default_factory=list)
     retrieved_items: list[dict[str, Any]] = Field(default_factory=list)
     working_memory: dict[str, Any] = Field(default_factory=dict)
+    latency_ms: int = 0
+    processing_mode: str = 'standard'
+    background_enrichment_started: bool = False
 
 
 class ConversationMessage(BaseModel):
@@ -59,3 +62,4 @@ class MemorySnapshotResponse(BaseModel):
     working_memory: dict[str, Any]
     long_term_memory: list[dict[str, Any]]
     images: list[dict[str, Any]]
+    resolution_logs: list[dict[str, Any]] = Field(default_factory=list)

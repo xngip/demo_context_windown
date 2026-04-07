@@ -1,5 +1,3 @@
-version: '3.9'
-
 services:
   db:
     image: pgvector/pgvector:pg16
@@ -9,7 +7,7 @@ services:
       POSTGRES_PASSWORD: demo
       POSTGRES_DB: multimodal_memory
     ports:
-      - "5433:5432"
+      - "5434:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -20,9 +18,9 @@ services:
 
   app:
     build: .
-    container_name: multimodal-memory-app
+    container_name: multimodal-memory-app-v2
     env_file:
-      - .env
+      - .env.docker
     ports:
       - "8000:8000"
     volumes:

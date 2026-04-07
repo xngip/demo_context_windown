@@ -1,37 +1,89 @@
-# Multimodal Context Window Demo (Gemini + PostgreSQL + pgvector)
+# Multimodal Context Window Demo Final
 
-Demo này bám sát thiết kế quản lý cửa sổ ngữ cảnh đa phương thức trong tài liệu của bạn:
-- recent memory
-- working memory
-- long-term memory
-- temporal resolver
-- reference resolver
-- image dehydrate / rehydrate
-- hybrid retrieval bằng PostgreSQL + pgvector
-- prompt builder theo ngữ cảnh hiện tại
+Bản này giữ nguyên hướng thiết kế của project gốc bạn cung cấp nhưng tối ưu lại ở 4 điểm chính.
 
-## 1. Stack
+1. Trả lời nhanh hơn
+- Nếu không có ảnh thì bỏ toàn bộ pipeline phân tích ảnh và đi theo fast text path.
+- Nếu có ảnh mới thì assistant trả lời ngay bằng cách dùng trực tiếp ảnh đang attach vào request.
+- Việc caption OCR tags embedding lưu long term memory và refine working memory được chạy tiếp ở nền.
 
-- FastAPI
-- PostgreSQL + pgvector
-- SQLAlchemy
-- Gemini API qua Google GenAI SDK
-- Local file storage cho ảnh demo
+2. Quản lý ngữ cảnh tốt hơn
+- Có recent memory
+- Có working memory nhanh để dùng ngay cho lượt hiện tại
+- Có working memory refine lại ở nền sau khi đã có câu trả lời
+- Có long term memory cho turn summary và image memory
+- Có resolution log để debug việc resolve ảnh này ảnh trước đó ảnh đầu tiên ảnh thứ 2 hôm qua tuần trước
 
-## 2. Gemini đang được dùng như thế nào
+3. UI rõ hơn
+- Có sidebar lịch sử hội thoại
+- Có optimistic UI khi gửi tin nhắn
+- Có pending bubble trong lúc chờ
+- Có badge hiển thị latency processing mode resolve retrieve background enrichment
+- Có auto refresh khi memory đang được enrich ở nền
+- Có nút xem memory snapshot
 
-Project dùng Gemini cho 4 việc:
-1. tạo câu trả lời cuối cùng
-2. phân tích ảnh: caption, OCR, tags, image type
-3. cập nhật working memory
-4. tạo embeddings để lưu vào pgvector
+4. Thay đổi ít nhất có thể
+- Giữ FastAPI
+- Giữ PostgreSQL cộng pgvector
+- Giữ Gemini service
+- Giữ cấu trúc app services static gần như cũ
+- Không thêm thư viện ngoài bắt buộc
 
-Biến môi trường được SDK tự nhận là `GEMINI_API_KEY`.
+## 1. Những cải tiến chính so với bản trước
 
-## 3. Cấu trúc thư mục
+### A. Fast path cho trải nghiệm người dùng
+Trước đây luồng là
+- save ảnh
+- analyze ảnh
+- OCR
+- tạo embedding
+- update working memory bằng LLM
+- summarize turn
+- lưu DB
+- rồi mới trả lời
+
+Bản này đổi thành
+- save ảnh và tạo placeholder nhanh
+- resolve reference và lấy recent memory nhanh
+- nếu có ảnh mới thì dùng trực tiếp ảnh đó để trả lời ngay
+- trả response cho người dùng
+- sau đó chạy background enrichment để phân tích ảnh lưu OCR caption embedding alias summary vào DB
+
+Điểm này giúp giảm rõ thời gian chờ ở các câu như
+- tóm tắt ảnh này
+- mô tả ảnh này
+- đọc chữ trong ảnh này
+
+### B. Working memory gọn hơn
+- Có fast working memory tạo bằng rule để dùng ngay
+- Có refine working memory bằng Gemini sau khi assistant đã trả lời
+- Giảm tình trạng unresolved questions bị phình và giữ lại cả những câu đã trả lời
+
+### C. Resolver tốt hơn
+Hiện hỗ trợ thêm
+- ảnh này
+- ảnh trước đó
+- ảnh vừa rồi
+- ảnh đầu tiên
+- bức ảnh đầu tiên
+- ảnh thứ 2
+- bức ảnh thứ 2
+- người ấy
+- hôm qua
+- hôm kia
+- tuần trước
+- thứ 2 tuần trước
+- dashboard cũ
+
+### D. Retrieval tốt hơn
+- Ưu tiên context của ảnh đã resolve
+- Alias search có filter theo conversation
+- Fast mode sẽ giảm phụ thuộc semantic retrieval để trả lời sớm hơn
+
+## 2. Cấu trúc project
 
 ```text
-multimodal_context_demo_gemini/
+multimodal_context_demo_final/
 ├── app/
 │   ├── config.py
 │   ├── db.py
@@ -39,214 +91,304 @@ multimodal_context_demo_gemini/
 │   ├── models.py
 │   ├── schemas.py
 │   ├── utils.py
-│   └── services/
-│       ├── chat_service.py
-│       ├── gemini_service.py
-│       ├── memory_manager.py
-│       ├── resolvers.py
-│       └── retrieval.py
+│   ├── services/
+│   │   ├── chat_service.py
+│   │   ├── gemini_service.py
+│   │   ├── memory_manager.py
+│   │   ├── resolvers.py
+│   │   └── retrieval.py
+│   └── static/
+│       ├── index.html
+│       ├── app.js
+│       └── styles.css
 ├── data/uploads/
 ├── .env.example
+├── .env.docker.example
 ├── Dockerfile
 ├── docker-compose.yml
 ├── requirements.txt
 └── README.md
 ```
 
-## 4. Chạy bằng Docker
+## 3. Chạy theo cách khuyên dùng
 
-### Bước 1
+Cách dễ nhất là
+- app chạy local bằng virtualenv
+- PostgreSQL cộng pgvector chạy bằng Docker ở cổng 5434
 
-Tạo file `.env` từ mẫu:
+### Bước 1. Giải nén và vào thư mục project
 
-```bash
-cp .env.example .env
+Windows PowerShell
+
+```powershell
+cd C:\Users\Admin\Downloads
+Expand-Archive .\multimodal_context_demo_final.zip -DestinationPath .\multimodal_context_demo_final
+cd .\multimodal_context_demo_final
 ```
 
-Sau đó điền `GEMINI_API_KEY` thật.
+Nếu bạn đã có folder rồi thì chỉ cần cd vào folder đó.
 
-### Bước 2
+### Bước 2. Tạo virtualenv
 
-Chạy toàn bộ hệ thống:
-
-```bash
-docker compose up --build
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
 ```
 
-API sẽ chạy ở:
+Nếu PowerShell chặn activate thì chạy tạm
 
-```text
-http://localhost:8000
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.venv\Scripts\Activate.ps1
 ```
 
-Swagger:
+### Bước 3. Cài thư viện
 
-```text
-http://localhost:8000/docs
+```powershell
+python -m pip install --upgrade pip
+pip install -r requirements.txt
 ```
 
-## 5. Chạy local không cần Docker app
+### Bước 4. Tạo file env cho local app
 
-Bạn vẫn có thể dùng Docker chỉ cho PostgreSQL:
+```powershell
+copy .env.example .env
+notepad .env
+```
 
-```bash
+Điền Gemini key mới của bạn vào file `.env`.
+
+Lưu ý rất quan trọng
+- Bạn đã từng làm lộ Gemini key cũ trong chat
+- Hãy rotate xóa key cũ và dùng key mới
+
+`.env.example` mặc định đã trỏ tới Docker DB local ở cổng 5434 nên thường không phải sửa database url nữa.
+
+### Bước 5. Chạy PostgreSQL cộng pgvector bằng Docker
+
+```powershell
+docker compose down -v
 docker compose up db -d
 ```
 
-Sau đó chạy app local:
+Project này map DB ra cổng `5434` để tránh đụng PostgreSQL local cài sẵn trên máy.
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env
+Kiểm tra log DB nếu cần
+
+```powershell
+docker compose logs db
+```
+
+### Bước 6. Chạy app
+
+```powershell
 uvicorn app.main:app --reload
 ```
 
-## 6. API chính
+Nếu thành công bạn sẽ thấy dòng tương tự
 
-### 6.1 Tạo conversation
+```text
+Application startup complete.
+```
+
+### Bước 7. Mở web demo
+
+```text
+http://127.0.0.1:8000
+```
+
+## 4. Chạy full Docker cả app lẫn DB
+
+Nếu muốn chạy toàn bộ bằng Docker Compose thì tạo file `.env.docker` từ mẫu.
+
+```powershell
+copy .env.docker.example .env.docker
+notepad .env.docker
+```
+
+Sau đó chạy
+
+```powershell
+docker compose up --build
+```
+
+Lúc này app container sẽ dùng database host là `db` đúng như `.env.docker.example`.
+
+## 5. Các endpoint chính
+
+### Tạo conversation
 
 ```bash
-curl -X POST http://localhost:8000/conversations
+curl -X POST http://127.0.0.1:8000/conversations
 ```
 
-Ví dụ response:
-
-```json
-{
-  "conversation_id": "...",
-  "title": "Multimodal Context Demo",
-  "created_at": "2026-04-01T..."
-}
-```
-
-### 6.2 Gửi chat text + ảnh
-
-```bash
-curl -X POST \
-  http://localhost:8000/conversations/<CONVERSATION_ID>/chat \
-  -F 'text=Phân tích ảnh này giúp tôi' \
-  -F 'images=@/absolute/path/to/dashboard.png'
-```
-
-Ví dụ hỏi tiếp:
-
-```bash
-curl -X POST \
-  http://localhost:8000/conversations/<CONVERSATION_ID>/chat \
-  -F 'text=So sánh với ảnh trước đó'
-```
-
-Ví dụ temporal/reference query:
-
-```bash
-curl -X POST \
-  http://localhost:8000/conversations/<CONVERSATION_ID>/chat \
-  -F 'text=Ảnh hôm qua có phải dashboard doanh thu quý không?'
-```
-
-Ví dụ rehydrate trực quan:
+### Gửi text và ảnh
 
 ```bash
 curl -X POST \
-  http://localhost:8000/conversations/<CONVERSATION_ID>/chat \
-  -F 'text=So sánh bố cục ảnh hiện tại với ảnh tôi gửi thứ 2 tuần trước'
+  http://127.0.0.1:8000/conversations/<CONVERSATION_ID>/chat \
+  -F "text=tóm tắt ảnh này" \
+  -F "images=@/absolute/path/to/image.png"
 ```
 
-### 6.3 Xem memory snapshot
+### Xem memory snapshot
 
 ```bash
-curl http://localhost:8000/conversations/<CONVERSATION_ID>/memory
+curl http://127.0.0.1:8000/conversations/<CONVERSATION_ID>/memory
 ```
 
-## 7. Mapping với thiết kế trong tài liệu
+## 6. Hành vi tối ưu mới
 
-### Recent Memory
-- lấy `MAX_RECENT_TURNS` turn gần nhất từ `conversation_turns`
-- dùng khi build prompt
+### Khi không có ảnh
+- Không gọi analyze image
+- Không OCR ảnh
+- Không chờ image embedding
+- Trả lời theo fast text path
+- Summary và refine working memory vẫn đi nền
 
-### Working Memory
-- bảng `conversation_working_memory`
-- lưu:
-  - user_goal
-  - current_task
-  - current_focus
-  - active_image_ids
-  - constraints
-  - decisions
-  - unresolved_questions
-  - summary_buffer
+### Khi có ảnh mới
+- Ảnh được lưu nhanh vào disk và DB
+- Assistant trả lời ngay bằng ảnh attach trực tiếp
+- Phân tích ảnh caption OCR tags embedding chạy ở nền
+- Memory snapshot và image metadata sẽ đầy đủ hơn sau một lúc ngắn
 
-### Long-term Memory
-- bảng `memory_items`
-- lưu:
-  - turn summaries
-  - image textual memory
-  - metadata theo thời gian
-  - vector embeddings bằng pgvector
+### Khi câu hỏi cần so sánh trực quan
+Các trigger như bố cục layout màu sắc giao diện cấu trúc biểu đồ sẽ làm hệ thống rehydrate ảnh cũ vào prompt nếu resolve được ảnh mục tiêu.
 
-### Image Understanding
-- bảng `image_understanding`
-- lưu:
-  - short_caption
-  - detailed_caption
-  - ocr_text
-  - ocr_text_compressed
-  - tags
-  - entities
-  - visual_summary
-  - dehydrate_payload
-  - embedding
+## 7. Những file đáng xem nhất
 
-### Resolver
-- `resolvers.py`
-- hỗ trợ:
-  - ảnh này
-  - ảnh trước đó
-  - dashboard cũ
-  - hôm qua
-  - hôm kia
-  - tuần trước
-  - thứ 2 tuần trước
+- `app/services/chat_service.py`
+  - luồng xử lý chính
+  - fast path
+  - background enrichment
 
-### Retrieval
-- `retrieval.py`
-- semantic retrieval qua pgvector
-- keyword retrieval qua caption/OCR/content ILIKE
-- alias lookup
-- hybrid score hợp nhất
+- `app/services/memory_manager.py`
+  - fast working memory
+  - normalize working memory
+  - snapshot
 
-### Dehydrate / Rehydrate
-- ảnh luôn được lưu local path trong `images.storage_uri`
-- textual memory lưu trong `image_understanding` + `memory_items`
-- nếu câu hỏi có tín hiệu trực quan như `bố cục`, `layout`, `màu sắc`, hệ thống nạp lại file ảnh cũ vào prompt
+- `app/services/resolvers.py`
+  - temporal resolver
+  - reference resolver
+  - ordinal image resolver
 
-## 8. Các endpoint / file quan trọng
+- `app/services/retrieval.py`
+  - hybrid retrieval
+  - ưu tiên context của ảnh đã resolve
 
-- `app/main.py`: API entrypoint
-- `app/services/chat_service.py`: luồng xử lý chính
-- `app/services/gemini_service.py`: gọi Gemini
-- `app/services/retrieval.py`: retrieval hybrid
-- `app/services/resolvers.py`: temporal/reference resolution
-- `app/services/memory_manager.py`: recent/working/long-term memory
-- `app/models.py`: schema PostgreSQL + pgvector
+- `app/static/app.js`
+  - optimistic UI
+  - pending bubble
+  - auto refresh khi background enrichment đang chạy
 
-## 9. Gợi ý mở rộng
+## 8. Gợi ý test đúng bài toán
 
-Nếu bạn muốn nâng cấp từ demo lên production, nên thêm:
-- Alembic migrations
-- object storage S3/MinIO thay local disk
-- queue cho image pipeline
-- image thumbnails / resize pipeline
-- FTS chuẩn hơn bằng tsvector generated column
-- eval suite cho reference resolution
-- batch embedding
-- auth và multi-user
+1. Tải ảnh mới và hỏi
+- tóm tắt ảnh này
+- mô tả ảnh này
+- đọc chữ trong ảnh này
 
-## 10. Lưu ý thực tế
+2. Tải nhiều ảnh rồi hỏi
+- cho tôi thêm thông tin về bức ảnh thứ 2
+- ảnh đầu tiên mô tả gì
+- ảnh trước đó là gì
 
-- Demo này ưu tiên sự rõ ràng và chạy được.
-- Gemini đang được dùng trực tiếp để OCR/captioning, nên chất lượng phụ thuộc model và file ảnh thực tế.
-- Embedding mặc định đang để `gemini-embedding-2-preview` với `EMBEDDING_DIM=768` để phù hợp demo đa phương thức và giảm chi phí/vector size. Bạn có thể đổi model trong `.env`.
+3. Hỏi tham chiếu thời gian
+- ảnh hôm qua là gì
+- ảnh thứ 2 tuần trước có phải dashboard doanh thu không
 
+4. Hỏi so sánh trực quan
+- so sánh bố cục ảnh này với ảnh trước đó
+
+## 9. Lưu ý thực tế
+
+- Vì background enrichment chạy sau khi đã trả lời nên một số metadata như OCR rút gọn tags long term memory có thể cập nhật chậm hơn câu trả lời đầu tiên một chút.
+- Điều này là chủ đích để giảm latency cho người dùng.
+- Web UI sẽ tự làm mới khi thấy background enrichment đang chạy.
+- Nếu bạn dùng PostgreSQL local của riêng bạn thì DB đó phải có pgvector. Nếu không có, hãy dùng Docker DB như hướng dẫn trên.
+
+## 10. Nếu gặp lỗi thường gặp
+
+### Lỗi thiếu Gemini key
+Kiểm tra `.env`
+
+```env
+GEMINI_API_KEY=KEY_MOI_CUA_BAN
+```
+
+### Lỗi không kết nối DB local app
+Kiểm tra `.env`
+
+```env
+DATABASE_URL=postgresql+psycopg://demo:demo@localhost:5434/multimodal_memory
+```
+
+### Lỗi DB cũ giữ credential sai
+Chạy lại sạch volume
+
+```powershell
+docker compose down -v
+docker compose up db -d
+```
+
+### Lỗi `/` 404
+Bản final này đã có web UI ở `/` nên nếu chạy đúng app bạn sẽ không còn gặp 404 ở root nữa.
+
+---
+
+Nếu bạn muốn nâng tiếp lên production sau bản này thì bước hợp lý nhất là thêm queue riêng cho background enrichment và thêm streaming token cho câu trả lời realtime.
+
+
+## 8. Streaming token v2
+
+Bản v2.1 thêm streaming token để người dùng thấy câu trả lời hiện dần ra theo thời gian thực.
+
+### Web UI
+- Nút Gửi trên giao diện web bây giờ mặc định dùng endpoint stream
+- Khi assistant bắt đầu trả lời bạn sẽ thấy token hiện dần trong bong bóng chat
+- Sau khi stream xong UI tự reload conversation để đồng bộ metadata latency retrieval resolve và trạng thái background enrichment
+
+### API stream
+
+Endpoint mới
+
+```bash
+curl -N -X POST \
+  http://127.0.0.1:8000/conversations/<CONVERSATION_ID>/chat/stream \
+  -H "Accept: text/event-stream" \
+  -F "text=tóm tắt ảnh này" \
+  -F "images=@/absolute/path/to/image.png"
+```
+
+Endpoint này trả về SSE event stream với các event chính
+- meta
+- token
+- done
+- error
+
+### Khi nào nên dùng
+- UI web dùng stream mặc định
+- API `/chat` cũ vẫn giữ nguyên để tiện test nhanh hoặc tích hợp đơn giản
+
+## 9. File thay đổi chính cho streaming
+
+- `app/main.py` thêm endpoint stream
+- `app/services/chat_service.py` thêm luồng prepare trước rồi stream token sau
+- `app/services/gemini_service.py` thêm `stream_answer`
+- `app/static/app.js` đọc SSE từ fetch stream và render token dần
+
+## 10. Gợi ý chạy
+
+Sau khi sửa `.env` và khởi động DB như hướng dẫn ở trên, chỉ cần chạy
+
+```powershell
+uvicorn app.main:app --reload
+```
+
+Rồi mở
+
+```text
+http://127.0.0.1:8000
+```
+
+Bạn sẽ thấy câu trả lời được stream ra trực tiếp trên giao diện.

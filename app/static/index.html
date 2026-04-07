@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Multimodal Context Demo</title>
-  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="stylesheet" href="/static/styles.css?v=4" />
 </head>
 <body>
   <div class="app-shell">
@@ -12,9 +12,12 @@
       <div class="sidebar-header">
         <div>
           <h1>Multimodal Demo</h1>
-          <p>Lịch sử cuộc hội thoại</p>
+          <p>Lịch sử hội thoại và bộ nhớ ngữ cảnh</p>
         </div>
         <button id="newChatBtn" class="primary-btn">+ Chat mới</button>
+      </div>
+      <div class="sidebar-tools">
+        <button id="refreshBtn" class="ghost-btn">Làm mới</button>
       </div>
       <div id="conversationList" class="conversation-list"></div>
     </aside>
@@ -25,8 +28,12 @@
           <h2 id="conversationTitle">Chọn một cuộc hội thoại</h2>
           <p id="conversationMeta">Tạo chat mới hoặc chọn lịch sử bên trái</p>
         </div>
-        <button id="refreshBtn" class="ghost-btn">Làm mới</button>
+        <div class="chat-header-actions">
+          <button type="button" id="memoryBtn" class="ghost-btn">Xem memory</button>
+        </div>
       </header>
+
+      <section id="statusBar" class="status-bar hidden"></section>
 
       <section id="messageList" class="message-list empty-state">
         <div>
@@ -39,15 +46,17 @@
 
       <form id="chatForm" class="composer">
         <div class="composer-row">
-          <textarea id="messageInput" placeholder="Nhập câu hỏi... ví dụ: so sánh ảnh này với dashboard hôm qua" rows="3"></textarea>
+          <textarea id="messageInput" placeholder="Nhập câu hỏi... ví dụ: so sánh ảnh này với ảnh hôm qua hoặc tóm tắt ảnh này" rows="3"></textarea>
         </div>
         <div class="composer-row composer-actions">
-          <label class="upload-btn">
-            <input id="imageInput" type="file" accept="image/*" multiple />
-            <span>Chọn ảnh</span>
-          </label>
+          <div class="left-actions">
+            <label class="upload-btn">
+              <input id="imageInput" type="file" accept="image/*" multiple />
+              <span>Chọn ảnh</span>
+            </label>
+            <div class="composer-hint">Enter để gửi và Shift Enter để xuống dòng</div>
+          </div>
           <div class="actions-right">
-            <button type="button" id="memoryBtn" class="ghost-btn">Xem memory</button>
             <button type="submit" id="sendBtn" class="primary-btn">Gửi</button>
           </div>
         </div>
@@ -65,6 +74,6 @@
     </div>
   </dialog>
 
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=4"></script>
 </body>
 </html>
