@@ -54,16 +54,18 @@ class Typewriter {
   type() {
     if (this.queue.length > 0) {
       this.isTyping = true;
+      const chatContainer = document.getElementById('messageList');
+      let isAtBottom = false;
+      if (chatContainer) {
+        isAtBottom = chatContainer.scrollHeight - chatContainer.scrollTop - chatContainer.clientHeight <= 10;
+      }
+
       this.currentText = (this.currentText || '') + this.queue[0];
       this.element.innerHTML = parseMarkdown(this.currentText);
       this.queue = this.queue.slice(1);
       
-      const chatContainer = document.getElementById('messageList');
-      if (chatContainer) {
-        const isAtBottom = chatContainer.scrollHeight - chatContainer.scrollTop - chatContainer.clientHeight < 100;
-        if (isAtBottom) {
-          chatContainer.scrollTop = chatContainer.scrollHeight;
-        }
+      if (chatContainer && isAtBottom) {
+        chatContainer.scrollTop = chatContainer.scrollHeight;
       }
       
       let delay = this.speed;
