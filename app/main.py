@@ -65,6 +65,15 @@ def get_conversation(conversation_id: UUID):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@app.delete('/conversations/{conversation_id}')
+def delete_conversation(conversation_id: UUID):
+    try:
+        service.delete_conversation(conversation_id)
+        return {'ok': True}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @app.post('/conversations', response_model=ConversationCreateResponse)
 def create_conversation(
     title: Annotated[str | None, Form()] = None,
@@ -83,6 +92,8 @@ async def chat(
     text: Annotated[str | None, Form()] = None,
     images: Annotated[list[UploadFile] | None, File()] = None,
 ):
+    if images and len(images) > 10:
+        raise HTTPException(status_code=400, detail='Bạn chỉ được gửi tối đa 10 ảnh 1 lần')
     uploads = []
     for image in images or []:
         uploads.append(
@@ -107,6 +118,8 @@ async def chat_stream(
     text: Annotated[str | None, Form()] = None,
     images: Annotated[list[UploadFile] | None, File()] = None,
 ):
+    if images and len(images) > 10:
+        raise HTTPException(status_code=400, detail='Bạn chỉ được gửi tối đa 10 ảnh 1 lần')
     uploads = []
     for image in images or []:
         uploads.append(

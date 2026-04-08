@@ -14,6 +14,7 @@ const els = {
   messageInput: document.getElementById('messageInput'),
   imageInput: document.getElementById('imageInput'),
   previewBar: document.getElementById('previewBar'),
+  deleteChatBtn: document.getElementById('deleteChatBtn'),
   memoryBtn: document.getElementById('memoryBtn'),
   memoryDialog: document.getElementById('memoryDialog'),
   memoryContent: document.getElementById('memoryContent'),
@@ -441,11 +442,39 @@ els.messageInput.addEventListener('keydown', (event) => {
 });
 els.imageInput.addEventListener('change', (event) => {
   const files = Array.from(event.target.files || []);
-  state.selectedFiles.push(...files);
+  const availableSlots = 10 - state.selectedFiles.length;
+  if (files.length > availableSlots) {
+    alert('Bạn chỉ được gửi tối đa 10 ảnh 1 lần.');
+    state.selectedFiles.push(...files.slice(0, Math.max(0, availableSlots)));
+  } else {
+    state.selectedFiles.push(...files);
+  }
   event.target.value = '';
   renderPreview();
 });
 els.memoryBtn.addEventListener('click', showMemory);
+els.deleteChatBtn.addEventListener('click', async () => {
+  if (!state.activeConversationId) return;
+  if (!confirm('Bạn có chắc muốn xóa cuộc hội thoại này? Dữ liệu không thể khôi phục.')) return;
+  try {
+    const oldBtnText = els.deleteChatBtn.textContent;
+    els.deleteChatBtn.textContent = 'Đang xóa...';
+    els.deleteChatBtn.disabled = true;
+    await api(`/conversations/${state.activeConversationId}`, { method: 'DELETE' });
+    state.activeConversationId = null;
+    await loadConversations();
+    els.conversationTitle.textContent = 'Chọn một cuộc hội thoại';
+    els.conversationMeta.textContent = 'Tạo chat mới hoặc chọn lịch sử bên trái';
+    els.messageList.classList.add('empty-state');
+    els.messageList.innerHTML = '<div><h3>Chưa có tin nhắn</h3><p>Hãy bắt đầu bằng một câu hỏi hoặc tải ảnh lên để demo quản lý ngữ cảnh đa phương thức.</p></div>';
+    els.deleteChatBtn.textContent = oldBtnText;
+    els.deleteChatBtn.disabled = false;
+  } catch (err) {
+    alert('Lỗi khi xóa: ' + err.message);
+    els.deleteChatBtn.textContent = 'Xóa Chat';
+    els.deleteChatBtn.disabled = false;
+  }
+});
 els.closeMemoryBtn.addEventListener('click', () => els.memoryDialog.close());
 els.newChatBtn.addEventListener('click', async () => {
   await createConversation();

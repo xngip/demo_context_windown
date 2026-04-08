@@ -54,6 +54,14 @@ class ChatService:
             db.refresh(convo)
             return convo
 
+    def delete_conversation(self, conversation_id: UUID) -> None:
+        with SessionLocal() as db:
+            convo = db.get(Conversation, conversation_id)
+            if not convo:
+                raise ValueError('Conversation not found')
+            db.delete(convo)
+            db.commit()
+
     def list_conversations(self) -> list[dict[str, Any]]:
         with SessionLocal() as db:
             convos = db.execute(
