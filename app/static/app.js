@@ -59,7 +59,12 @@ class Typewriter {
       this.queue = this.queue.slice(1);
       
       const chatContainer = document.getElementById('messageList');
-      if (chatContainer) chatContainer.scrollTop = chatContainer.scrollHeight;
+      if (chatContainer) {
+        const isAtBottom = chatContainer.scrollHeight - chatContainer.scrollTop - chatContainer.clientHeight < 100;
+        if (isAtBottom) {
+          chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+      }
       
       let delay = this.speed;
       const lastChar = this.currentText.slice(-1);
@@ -113,6 +118,13 @@ function escapeHtml(text) {
 }
 
 function parseMarkdown(text) {
+  if (typeof window.marked !== 'undefined') {
+    if (typeof window.marked.parse === 'function') {
+      return window.marked.parse(text || '', { breaks: true, gfm: true });
+    } else {
+      return window.marked(text || '', { breaks: true, gfm: true });
+    }
+  }
   let html = escapeHtml(text);
   html = html.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
   html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
@@ -400,11 +412,12 @@ async function sendMessage(event) {
   appendOptimisticUserMessage(text, selectedFiles);
   const bubble = createStreamingAssistantBubble();
 
+  els.messageInput.value = '';
+  state.selectedFiles = [];
+  renderPreview();
+
   try {
     const result = await streamChat(formData, bubble);
-    els.messageInput.value = '';
-    state.selectedFiles = [];
-    renderPreview();
     await loadConversations();
     await loadConversation(state.activeConversationId);
     const latency = result?.latency_ms || 0;
