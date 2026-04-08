@@ -12,7 +12,7 @@ const els = {
   messageList: document.getElementById('messageList'),
   chatForm: document.getElementById('chatForm'),
   messageInput: document.getElementById('messageInput'),
-  imageInput: document.getElementById('imageInput'),
+  fileInput: document.getElementById('fileInput'),
   previewBar: document.getElementById('previewBar'),
   deleteChatBtn: document.getElementById('deleteChatBtn'),
   memoryBtn: document.getElementById('memoryBtn'),
@@ -194,12 +194,23 @@ function renderMessages(detail) {
       </div>
     `).join('');
 
+    const docsHtml = (msg.documents || []).map((doc) => `
+      <div class="document-attachment">
+        <span class="doc-icon">📄</span>
+        <div class="doc-info">
+            <span class="doc-name">${doc.file_name}</span>
+            <span class="doc-status">${doc.processing_status === 'pending' ? 'đang phân tích...' : 'đã lưu ngữ cảnh'}</span>
+        </div>
+      </div>
+    `).join('');
+
     div.innerHTML = `
       <div class="message-header">
         <strong>${msg.role === 'user' ? 'Bạn' : 'Assistant'}</strong>
       </div>
       <div class="message-text">${parseMarkdown(msg.text || '')}</div>
       ${imagesHtml ? `<div class="message-images">${imagesHtml}</div>` : ''}
+      ${docsHtml ? `<div class="message-documents">${docsHtml}</div>` : ''}
     `;
     els.messageList.appendChild(div);
   }
@@ -244,8 +255,18 @@ function renderPreview() {
   state.selectedFiles.forEach((file, index) => {
     const wrap = document.createElement('div');
     wrap.className = 'preview-item';
-    const img = document.createElement('img');
-    img.src = URL.createObjectURL(file);
+    
+    if (file.type.startsWith('image/')) {
+        const img = document.createElement('img');
+        img.src = URL.createObjectURL(file);
+        wrap.appendChild(img);
+    } else {
+        const docIcon = document.createElement('div');
+        docIcon.className = 'preview-doc-icon';
+        docIcon.textContent = '📄 ' + trimText(file.name, 15);
+        wrap.appendChild(docIcon);
+    }
+    
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.textContent = '×';
@@ -253,7 +274,6 @@ function renderPreview() {
       state.selectedFiles.splice(index, 1);
       renderPreview();
     });
-    wrap.appendChild(img);
     wrap.appendChild(btn);
     els.previewBar.appendChild(wrap);
   });
@@ -271,18 +291,33 @@ function appendOptimisticUserMessage(text, files) {
   els.messageList.classList.remove('empty-state');
   const user = document.createElement('article');
   user.className = 'message user';
-  const previewImages = files.map((file) => `
+  
+  const imgFiles = files.filter(f => f.type.startsWith('image/'));
+  const docFiles = files.filter(f => !f.type.startsWith('image/'));
+
+  const previewImages = imgFiles.map((file) => `
     <div>
       <img src="${URL.createObjectURL(file)}" alt="preview" />
       <div class="image-caption">${file.name}</div>
     </div>
   `).join('');
+
+  const previewDocs = docFiles.map((file) => `
+      <div class="document-attachment">
+        <span class="doc-icon">📄</span>
+        <div class="doc-info">
+            <span class="doc-name">${file.name}</span>
+        </div>
+      </div>
+  `).join('');
+
   user.innerHTML = `
     <div class="message-header">
       <strong>Bạn</strong>
     </div>
     <div class="message-text">${parseMarkdown(text || '')}</div>
     ${previewImages ? `<div class="message-images">${previewImages}</div>` : ''}
+    ${previewDocs ? `<div class="message-documents">${previewDocs}</div>` : ''}
   `;
   els.messageList.appendChild(user);
   els.messageList.scrollTop = els.messageList.scrollHeight;
@@ -408,7 +443,7 @@ async function sendMessage(event) {
   const selectedFiles = [...state.selectedFiles];
   const formData = new FormData();
   if (text) formData.append('text', text);
-  for (const file of selectedFiles) formData.append('images', file);
+  for (const file of selectedFiles) formData.append('files', file);
 
   els.sendBtn.disabled = true;
   appendOptimisticUserMessage(text, selectedFiles);
@@ -455,11 +490,11 @@ els.messageInput.addEventListener('keydown', (event) => {
     els.chatForm.requestSubmit();
   }
 });
-els.imageInput.addEventListener('change', (event) => {
+els.fileInput.addEventListener('change', (event) => {
   const files = Array.from(event.target.files || []);
   const availableSlots = 10 - state.selectedFiles.length;
   if (files.length > availableSlots) {
-    alert('Bạn chỉ được gửi tối đa 10 ảnh 1 lần.');
+    alert('Bạn chỉ được gửi tối đa 10 tệp 1 lần.');
     state.selectedFiles.push(...files.slice(0, Math.max(0, availableSlots)));
   } else {
     state.selectedFiles.push(...files);

@@ -45,6 +45,7 @@ class ConversationMessage(BaseModel):
     summary: str | None = None
     created_at: datetime
     images: list[dict[str, Any]] = Field(default_factory=list)
+    documents: list[dict[str, Any]] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -62,4 +63,5 @@ class MemorySnapshotResponse(BaseModel):
     working_memory: dict[str, Any]
     long_term_memory: list[dict[str, Any]]
     images: list[dict[str, Any]]
+    documents: list[dict[str, Any]] = Field(default_factory=list)
     resolution_logs: list[dict[str, Any]] = Field(default_factory=list)

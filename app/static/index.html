@@ -5,7 +5,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Multimodal Context Demo</title>
-  <link rel="stylesheet" href="/static/styles.css?v=11" />
+  <link rel="stylesheet" href="/static/styles.css?v=14" />
 </head>
 
 <body>
@@ -57,8 +57,8 @@
         <div class="composer-row composer-actions">
           <div class="left-actions">
             <label class="upload-btn">
-              <input id="imageInput" type="file" accept="image/*" multiple />
-              <span>Chọn ảnh</span>
+              <input id="fileInput" name="files" type="file" accept="image/*,.pdf,.txt,.docx,.csv" multiple />
+              <span>Thêm file</span>
             </label>
             <div class="composer-hint">Enter để gửi và Shift Enter để xuống dòng</div>
           </div>
@@ -81,7 +81,7 @@
   </dialog>
 
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-  <script src="/static/app.js?v=11"></script>
+  <script src="/static/app.js?v=14"></script>
 </body>
 
 </html>

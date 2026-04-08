@@ -87,6 +87,48 @@ class ImageUnderstanding(Base):
     image: Mapped['ImageAsset'] = relationship(back_populates='understanding')
 
 
+class DocumentAsset(Base):
+    __tablename__ = 'documents'
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey('conversations.id', ondelete='CASCADE'), index=True)
+    uploaded_by_turn_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey('conversation_turns.id', ondelete='SET NULL'), nullable=True)
+    storage_uri: Mapped[str] = mapped_column(Text, nullable=False)
+    file_name: Mapped[str] = mapped_column(Text, nullable=False)
+    mime_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    checksum: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    metadata_json: Mapped[dict] = mapped_column('metadata', JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    understanding: Mapped['DocumentUnderstanding'] = relationship(back_populates='document', uselist=False, cascade='all, delete-orphan')
+
+
+class TurnDocument(Base):
+    __tablename__ = 'turn_documents'
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    turn_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey('conversation_turns.id', ondelete='CASCADE'), index=True)
+    document_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey('documents.id', ondelete='CASCADE'), index=True)
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class DocumentUnderstanding(Base):
+    __tablename__ = 'document_understanding'
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    document_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey('documents.id', ondelete='CASCADE'), unique=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    extracted_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tags: Mapped[list[str] | None] = mapped_column(ARRAY(String), nullable=True)
+    entities: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    document: Mapped['DocumentAsset'] = relationship(back_populates='understanding')
+
+
 class WorkingMemory(Base):
     __tablename__ = 'conversation_working_memory'
 
@@ -95,6 +137,7 @@ class WorkingMemory(Base):
     current_task: Mapped[str | None] = mapped_column(Text, nullable=True)
     current_focus: Mapped[dict] = mapped_column(JSON, default=dict)
     active_image_ids: Mapped[list[uuid.UUID] | None] = mapped_column(ARRAY(UUID(as_uuid=True)), nullable=True)
+    active_document_ids: Mapped[list[uuid.UUID] | None] = mapped_column(ARRAY(UUID(as_uuid=True)), nullable=True)
     constraints: Mapped[list] = mapped_column(JSON, default=list)
     decisions: Mapped[list] = mapped_column(JSON, default=list)
     unresolved_questions: Mapped[list] = mapped_column(JSON, default=list)
@@ -110,6 +153,7 @@ class MemoryItem(Base):
     memory_type: Mapped[str] = mapped_column(String(64), nullable=False)
     source_turn_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey('conversation_turns.id', ondelete='SET NULL'), nullable=True)
     source_image_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey('images.id', ondelete='SET NULL'), nullable=True)
+    source_document_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey('documents.id', ondelete='SET NULL'), nullable=True)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM), nullable=True)
     event_time_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -141,6 +185,7 @@ class ResolutionLog(Base):
     raw_expression: Mapped[str] = mapped_column(Text, nullable=False)
     resolution_type: Mapped[str] = mapped_column(String(64), nullable=False)
     resolved_image_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey('images.id', ondelete='SET NULL'), nullable=True)
+    resolved_document_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey('documents.id', ondelete='SET NULL'), nullable=True)
     resolved_turn_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey('conversation_turns.id', ondelete='SET NULL'), nullable=True)
     confidence: Mapped[float] = mapped_column(Float, default=0.0)
     resolver_output: Mapped[dict] = mapped_column(JSON, default=dict)

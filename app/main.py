@@ -90,17 +90,17 @@ def create_conversation(
 async def chat(
     conversation_id: UUID,
     text: Annotated[str | None, Form()] = None,
-    images: Annotated[list[UploadFile] | None, File()] = None,
+    files: Annotated[list[UploadFile] | None, File()] = None,
 ):
-    if images and len(images) > 10:
-        raise HTTPException(status_code=400, detail='Bạn chỉ được gửi tối đa 10 ảnh 1 lần')
+    if files and len(files) > 10:
+        raise HTTPException(status_code=400, detail='Bạn chỉ được gửi tối đa 10 tệp 1 lần')
     uploads = []
-    for image in images or []:
+    for file in files or []:
         uploads.append(
             {
-                'filename': image.filename,
-                'mime_type': image.content_type,
-                'content': await image.read(),
+                'filename': file.filename,
+                'mime_type': file.content_type,
+                'content': await file.read(),
             }
         )
     try:
@@ -116,17 +116,17 @@ async def chat(
 async def chat_stream(
     conversation_id: UUID,
     text: Annotated[str | None, Form()] = None,
-    images: Annotated[list[UploadFile] | None, File()] = None,
+    files: Annotated[list[UploadFile] | None, File()] = None,
 ):
-    if images and len(images) > 10:
-        raise HTTPException(status_code=400, detail='Bạn chỉ được gửi tối đa 10 ảnh 1 lần')
+    if files and len(files) > 10:
+        raise HTTPException(status_code=400, detail='Bạn chỉ được gửi tối đa 10 tệp 1 lần')
     uploads = []
-    for image in images or []:
+    for file in files or []:
         uploads.append(
             {
-                'filename': image.filename,
-                'mime_type': image.content_type,
-                'content': await image.read(),
+                'filename': file.filename,
+                'mime_type': file.content_type,
+                'content': await file.read(),
             }
         )
     stream = service.process_chat_stream(conversation_id, text, uploads)

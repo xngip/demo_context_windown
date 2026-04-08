@@ -10,6 +10,8 @@ from app.models import (
     ImageAlias,
     ImageAsset,
     ImageUnderstanding,
+    DocumentAsset,
+    DocumentUnderstanding,
     MemoryItem,
     ResolutionLog,
     Turn,
@@ -116,7 +118,8 @@ class MemoryManager:
         previous_memory: dict[str, Any],
         user_text: str,
         current_image_ids: list[str],
-        image_placeholders: list[dict[str, Any]],
+        current_document_ids: list[str],
+        file_placeholders: list[dict[str, Any]],
     ) -> dict[str, Any]:
         lower = (user_text or '').lower()
         constraints = list(previous_memory.get('constraints', []) or [])
@@ -133,11 +136,12 @@ class MemoryManager:
             unresolved.append(compact_text(user_text, 240))
 
         focus = {
-            'focus_type': 'image' if current_image_ids else 'text',
+            'focus_type': 'image_or_file' if (current_image_ids or current_document_ids) else 'text',
             'primary_image_ids': current_image_ids[:2],
-            'new_image_count': len(current_image_ids),
+            'primary_document_ids': current_document_ids[:2],
+            'new_file_count': len(current_image_ids) + len(current_document_ids),
             'reference_expressions': detect_reference_expressions(user_text),
-            'current_uploads': image_placeholders,
+            'current_uploads': file_placeholders,
         }
 
         combined_summary = ' | '.join(
@@ -174,6 +178,7 @@ class MemoryManager:
             .order_by(desc(MemoryItem.created_at))
             .limit(20)
         ).scalars().all()
+        
         images = db.execute(
             select(ImageAsset, ImageUnderstanding)
             .outerjoin(ImageUnderstanding, ImageUnderstanding.image_id == ImageAsset.id)
@@ -181,6 +186,15 @@ class MemoryManager:
             .order_by(desc(ImageAsset.created_at))
             .limit(20)
         ).all()
+
+        documents = db.execute(
+            select(DocumentAsset, DocumentUnderstanding)
+            .outerjoin(DocumentUnderstanding, DocumentUnderstanding.document_id == DocumentAsset.id)
+            .where(DocumentAsset.conversation_id == conversation_id)
+            .order_by(desc(DocumentAsset.created_at))
+            .limit(20)
+        ).all()
+
         resolutions = db.execute(
             select(ResolutionLog)
             .where(ResolutionLog.conversation_id == conversation_id)
@@ -223,6 +237,18 @@ class MemoryManager:
                     'created_at': image.created_at.isoformat() if image.created_at else None,
                 }
                 for image, iu in images
+            ],
+            'documents': [
+                {
+                    'document_id': str(doc.id),
+                    'storage_uri': doc.storage_uri,
+                    'file_name': doc.file_name,
+                    'summary': du.summary if du else None,
+                    'tags': du.tags if du else [],
+                    'processing_status': (doc.metadata_json or {}).get('analysis_status', 'unknown'),
+                    'created_at': doc.created_at.isoformat() if doc.created_at else None,
+                }
+                for doc, du in documents
             ],
             'resolution_logs': [
                 {
@@ -283,6 +309,32 @@ class MemoryManager:
             importance_score=0.8,
             recency_score=0.8,
             metadata_json={'image_type': image_type, 'tags': tags or []},
+        )
+        db.add(item)
+        db.flush()
+        return item
+
+    def persist_document_memory(
+        self,
+        db: Session,
+        conversation_id: UUID,
+        document_id: UUID,
+        content: str,
+        embedding: list[float],
+        tags: list[str] | None,
+        event_time,
+    ) -> MemoryItem:
+        item = MemoryItem(
+            conversation_id=conversation_id,
+            memory_type='document_memory',
+            source_document_id=document_id,
+            content=content,
+            embedding=embedding,
+            event_time_start=event_time,
+            event_time_end=event_time,
+            importance_score=0.8,
+            recency_score=0.8,
+            metadata_json={'tags': tags or []},
         )
         db.add(item)
         db.flush()

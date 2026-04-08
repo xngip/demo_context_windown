@@ -50,10 +50,19 @@ class GeminiService:
             return [0.0] * self.settings.embedding_dim
         return list(values)
 
-    def image_part_from_file(self, file_path: str, mime_type: str):
+    def file_part_from_path(self, file_path: str, mime_type: str):
+        if 'wordprocessingml.document' in mime_type:
+            try:
+                import docx
+                doc = docx.Document(file_path)
+                full_text = [para.text for para in doc.paragraphs]
+                return types.Part.from_text(text='\n'.join(full_text))
+            except Exception as e:
+                return types.Part.from_text(text=f'[Lỗi đọc file DOCX: {str(e)}]')
+
         with open(file_path, 'rb') as f:
-            image_bytes = f.read()
-        return types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
+            file_bytes = f.read()
+        return types.Part.from_bytes(data=file_bytes, mime_type=mime_type)
 
     def analyze_image(self, file_path: str, mime_type: str) -> dict[str, Any]:
         schema = {
@@ -86,13 +95,49 @@ class GeminiService:
             'image_type chỉ chọn một giá trị gần nhất trong nhóm: dashboard, screenshot, document, photo, chart, ui, receipt, other. '
             'OCR rút gọn phải giữ lại các chữ, số, tên riêng và từ khóa quan trọng nhất.'
         )
-        result = self._generate_json(prompt, schema, parts=[self.image_part_from_file(file_path, mime_type)])
+        result = self._generate_json(prompt, schema, parts=[self.file_part_from_path(file_path, mime_type)])
         result['ocr_text'] = compact_text(result.get('ocr_text', ''), max_chars=4000)
         result['ocr_text_compressed'] = compact_text(result.get('ocr_text_compressed', ''), max_chars=self.settings.max_ocr_chars)
         result['textual_memory'] = '\n'.join([
             result.get('short_caption', ''),
             result.get('detailed_caption', ''),
             f"OCR: {result.get('ocr_text_compressed', '')}",
+            f"Tags: {', '.join(result.get('tags', []))}",
+        ]).strip()
+        result['embedding'] = self.embed_text(result['textual_memory'])
+        return result
+
+    def analyze_document(self, file_path: str, mime_type: str) -> dict[str, Any]:
+        schema = {
+            'type': 'object',
+            'required': ['summary', 'extracted_text', 'tags'],
+            'properties': {
+                'summary': {'type': 'string'},
+                'extracted_text': {'type': 'string'},
+                'tags': {'type': 'array', 'items': {'type': 'string'}},
+                'entities': {
+                    'type': 'array',
+                    'items': {
+                        'type': 'object',
+                        'properties': {
+                            'name': {'type': 'string'},
+                            'kind': {'type': 'string'},
+                        },
+                        'required': ['name', 'kind'],
+                    },
+                },
+            },
+        }
+        prompt = (
+            'Phân tích tài liệu cho hệ thống quản lý ngữ cảnh đa phương thức. '
+            'Trả về JSON với: summary (tóm tắt ý chính tài liệu), extracted_text (nội dung text, ưu tiên giữ thông tin quan trọng rút gọn nếu quá dài), '
+            'tags (các từ khóa), entities (thực thể quan trọng có name, kind). '
+        )
+        result = self._generate_json(prompt, schema, parts=[self.file_part_from_path(file_path, mime_type)])
+        result['extracted_text'] = compact_text(result.get('extracted_text', ''), max_chars=8000)
+        result['textual_memory'] = '\n'.join([
+            f"Document Summary: {result.get('summary', '')}",
+            f"Text content: {result.get('extracted_text', '')}",
             f"Tags: {', '.join(result.get('tags', []))}",
         ]).strip()
         result['embedding'] = self.embed_text(result['textual_memory'])

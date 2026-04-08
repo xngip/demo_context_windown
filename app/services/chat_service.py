@@ -12,7 +12,7 @@ from sqlalchemy import desc, func, select
 
 from app.config import get_settings
 from app.db import SessionLocal
-from app.models import Conversation, ImageAsset, ImageUnderstanding, ResolutionLog, Turn, TurnImage
+from app.models import Conversation, ImageAsset, ImageUnderstanding, DocumentAsset, DocumentUnderstanding, ResolutionLog, Turn, TurnImage, TurnDocument
 from app.services.gemini_service import GeminiService
 from app.services.memory_manager import MemoryManager
 from app.services.resolvers import ResolutionResult, detect_reference_expressions, resolve_reference
@@ -113,6 +113,14 @@ class ChatService:
                 .order_by(TurnImage.position)
             ).all() if turn_ids else []
 
+            document_links = db.execute(
+                select(TurnDocument, DocumentAsset, DocumentUnderstanding)
+                .join(DocumentAsset, TurnDocument.document_id == DocumentAsset.id)
+                .outerjoin(DocumentUnderstanding, DocumentUnderstanding.document_id == DocumentAsset.id)
+                .where(TurnDocument.turn_id.in_(turn_ids) if turn_ids else False)
+                .order_by(TurnDocument.position)
+            ).all() if turn_ids else []
+
             images_by_turn: dict[UUID, list[dict[str, Any]]] = {}
             for turn_image, image, understanding in image_links:
                 images_by_turn.setdefault(turn_image.turn_id, []).append(
@@ -127,6 +135,20 @@ class ChatService:
                     }
                 )
 
+            documents_by_turn: dict[UUID, list[dict[str, Any]]] = {}
+            for turn_doc, document, understanding in document_links:
+                documents_by_turn.setdefault(turn_doc.turn_id, []).append(
+                    {
+                        'document_id': str(document.id),
+                        'url': self._build_image_url(document.storage_uri),
+                        'file_name': document.file_name,
+                        'mime_type': document.mime_type,
+                        'summary': understanding.summary if understanding else None,
+                        'tags': understanding.tags if understanding else [],
+                        'processing_status': (document.metadata_json or {}).get('analysis_status', 'unknown'),
+                    }
+                )
+
             messages = [
                 {
                     'turn_id': t.id,
@@ -136,6 +158,7 @@ class ChatService:
                     'summary': t.response_summary,
                     'created_at': t.created_at,
                     'images': images_by_turn.get(t.id, []),
+                    'documents': documents_by_turn.get(t.id, []),
                     'metadata': t.metadata_json or {},
                 }
                 for t in turns
@@ -228,51 +251,70 @@ class ChatService:
             db.flush()
 
             current_image_ids: list[str] = []
-            current_image_parts = []
+            current_document_ids: list[str] = []
+            current_file_parts = []
             image_jobs: list[dict[str, Any]] = []
-            image_placeholders: list[dict[str, Any]] = []
+            document_jobs: list[dict[str, Any]] = []
+            file_summaries: list[dict[str, Any]] = []
 
             for idx, upload in enumerate(uploads):
                 file_path = save_upload_bytes(self.settings.upload_dir, str(conversation_id), upload['filename'], upload['content'])
                 mime_type = upload.get('mime_type') or guess_mime_type(upload['filename'])
-                current_image_parts.append(self.gemini.image_part_from_file(file_path, mime_type))
+                current_file_parts.append(self.gemini.file_part_from_path(file_path, mime_type))
 
-                image = ImageAsset(
-                    conversation_id=conversation_id,
-                    uploaded_by_turn_id=user_turn.id,
-                    storage_uri=file_path,
-                    mime_type=mime_type,
-                    checksum=sha256_of_file(file_path),
-                    image_type='pending',
-                    metadata_json={
-                        'analysis_status': 'pending',
-                        'original_filename': upload['filename'],
-                    },
-                )
-                db.add(image)
-                db.flush()
-                db.add(TurnImage(turn_id=user_turn.id, image_id=image.id, position=idx))
+                if mime_type.startswith('image/'):
+                    image = ImageAsset(
+                        conversation_id=conversation_id,
+                        uploaded_by_turn_id=user_turn.id,
+                        storage_uri=file_path,
+                        mime_type=mime_type,
+                        checksum=sha256_of_file(file_path),
+                        image_type='pending',
+                        metadata_json={
+                            'analysis_status': 'pending',
+                            'original_filename': upload['filename'],
+                        },
+                    )
+                    db.add(image)
+                    db.flush()
+                    db.add(TurnImage(turn_id=user_turn.id, image_id=image.id, position=idx))
 
-                current_image_id = str(image.id)
-                current_image_ids.append(current_image_id)
-                placeholder = {
-                    'image_id': current_image_id,
-                    'filename': upload['filename'],
-                    'image_type': 'pending',
-                    'status': 'attached_and_answerable_now',
-                }
-                image_placeholders.append(placeholder)
-                image_jobs.append(
-                    {
-                        'image_id': current_image_id,
-                        'file_path': file_path,
-                        'mime_type': mime_type,
-                    }
-                )
+                    current_image_ids.append(str(image.id))
+                    file_summaries.append({
+                        'image_id': str(image.id),
+                        'filename': upload['filename'],
+                        'image_type': 'pending',
+                        'status': 'attached_and_answerable_now',
+                    })
+                    image_jobs.append({'image_id': str(image.id), 'file_path': file_path, 'mime_type': mime_type})
+                else:
+                    document = DocumentAsset(
+                        conversation_id=conversation_id,
+                        uploaded_by_turn_id=user_turn.id,
+                        storage_uri=file_path,
+                        file_name=upload['filename'],
+                        mime_type=mime_type,
+                        checksum=sha256_of_file(file_path),
+                        metadata_json={
+                            'analysis_status': 'pending',
+                            'original_filename': upload['filename'],
+                        },
+                    )
+                    db.add(document)
+                    db.flush()
+                    db.add(TurnDocument(turn_id=user_turn.id, document_id=document.id, position=idx))
+
+                    current_document_ids.append(str(document.id))
+                    file_summaries.append({
+                        'document_id': str(document.id),
+                        'filename': upload['filename'],
+                        'status': 'attached_and_answerable_now',
+                    })
+                    document_jobs.append({'document_id': str(document.id), 'file_path': file_path, 'mime_type': mime_type})
 
             working_memory = self.memory.get_or_create_working_memory(db, conversation_id)
             previous_wm = self.memory.serialize_working_memory(working_memory)
-            fast_wm = self.memory.build_fast_working_memory(previous_wm, user_text, current_image_ids, image_placeholders)
+            fast_wm = self.memory.build_fast_working_memory(previous_wm, user_text, current_image_ids, current_document_ids, file_summaries)
             self.memory.apply_working_memory(db, conversation_id, fast_wm)
 
             resolved_refs = resolve_reference(
@@ -327,10 +369,10 @@ class ChatService:
                 user_text=user_text,
                 recent_turns=recent_turns,
                 working_memory=fast_wm,
-                image_summaries=image_placeholders,
+                file_summaries=file_summaries,
                 retrieved=retrieved,
                 resolved_refs=resolved_refs,
-                has_current_images=bool(current_image_parts),
+                has_current_files=bool(current_file_parts),
                 prefer_fast=prefer_fast,
             )
 
@@ -344,8 +386,9 @@ class ChatService:
                 'user_turn_id': user_turn.id,
                 'user_text': user_text,
                 'prompt': prompt,
-                'image_parts': current_image_parts + rehydrated_parts,
+                'image_parts': current_file_parts + rehydrated_parts,
                 'image_jobs': image_jobs,
+                'document_jobs': document_jobs,
                 'resolved_references': self._serialize_resolution_results(resolved_refs),
                 'retrieved_items': retrieved,
                 'working_memory': fast_wm,
@@ -394,6 +437,7 @@ class ChatService:
             user_text=prepared['user_text'],
             answer=answer,
             image_jobs=prepared['image_jobs'],
+            document_jobs=prepared['document_jobs'],
             previous_wm=prepared['working_memory'],
             resolved_refs=prepared['resolved_references'],
         )
@@ -435,7 +479,7 @@ class ChatService:
             if not image or image.storage_uri in seen_paths:
                 continue
             seen_paths.add(image.storage_uri)
-            parts.append(self.gemini.image_part_from_file(image.storage_uri, image.mime_type or 'image/png'))
+            parts.append(self.gemini.file_part_from_path(image.storage_uri, image.mime_type or 'image/png'))
         return parts
 
     def _serialize_resolution_results(self, resolved_refs: list[ResolutionResult]) -> list[dict[str, Any]]:
@@ -458,7 +502,50 @@ class ChatService:
         try:
             with SessionLocal() as db:
                 conversation_id: UUID = payload['conversation_id']
-                image_summaries: list[dict[str, Any]] = []
+                file_summaries: list[dict[str, Any]] = []
+
+                for job in payload.get('document_jobs', []):
+                    document = db.get(DocumentAsset, UUID(job['document_id']))
+                    if not document:
+                        continue
+                    understanding = db.execute(
+                        select(DocumentUnderstanding).where(DocumentUnderstanding.document_id == document.id)
+                    ).scalar_one_or_none()
+                    if understanding:
+                        file_summaries.append({
+                            'document_id': str(document.id),
+                            'summary': understanding.summary,
+                            'tags': understanding.tags or [],
+                        })
+                        continue
+
+                    analysis = self.gemini.analyze_document(job['file_path'], job['mime_type'])
+                    document.metadata_json = {**(document.metadata_json or {}), 'analysis_status': 'ready'}
+                    understanding = DocumentUnderstanding(
+                        document_id=document.id,
+                        summary=analysis.get('summary'),
+                        extracted_text=analysis.get('extracted_text'),
+                        tags=analysis.get('tags') or [],
+                        entities=analysis.get('entities') or [],
+                        embedding=analysis.get('embedding'),
+                    )
+                    db.add(understanding)
+                    db.flush()
+
+                    self.memory.persist_document_memory(
+                        db=db,
+                        conversation_id=conversation_id,
+                        document_id=document.id,
+                        content=analysis.get('textual_memory', ''),
+                        embedding=analysis.get('embedding'),
+                        tags=analysis.get('tags') or [],
+                        event_time=document.created_at,
+                    )
+                    file_summaries.append({
+                        'document_id': str(document.id),
+                        'summary': analysis.get('summary'),
+                        'tags': analysis.get('tags') or [],
+                    })
 
                 for job in payload.get('image_jobs', []):
                     image = db.get(ImageAsset, UUID(job['image_id']))
@@ -468,7 +555,7 @@ class ChatService:
                         select(ImageUnderstanding).where(ImageUnderstanding.image_id == image.id)
                     ).scalar_one_or_none()
                     if understanding:
-                        image_summaries.append(
+                        file_summaries.append(
                             {
                                 'image_id': str(image.id),
                                 'short_caption': understanding.short_caption,
@@ -527,7 +614,7 @@ class ChatService:
                         tags=analysis.get('tags') or [],
                         event_time=image.created_at,
                     )
-                    image_summaries.append(
+                    file_summaries.append(
                         {
                             'image_id': str(image.id),
                             'short_caption': analysis.get('short_caption'),
@@ -544,7 +631,7 @@ class ChatService:
                     previous_memory=previous_wm,
                     user_text=payload['user_text'],
                     assistant_answer=payload['answer'],
-                    image_summaries=image_summaries,
+                    image_summaries=file_summaries,
                     resolved_references=payload.get('resolved_refs', []),
                 )
                 self.memory.apply_working_memory(db, conversation_id, updated_wm)
@@ -564,7 +651,7 @@ class ChatService:
                     meta['background_enrichment_pending'] = False
                     meta['background_enrichment_completed'] = True
                     meta['background_enrichment_completed_at'] = datetime.utcnow().isoformat()
-                    meta['image_enrichment_count'] = len(image_summaries)
+                    meta['file_enrichment_count'] = len(file_summaries)
                     assistant_turn.metadata_json = meta
                 db.commit()
         except Exception as exc:
@@ -583,10 +670,10 @@ class ChatService:
         user_text: str,
         recent_turns: list[Turn],
         working_memory: dict[str, Any],
-        image_summaries: list[dict[str, Any]],
+        file_summaries: list[dict[str, Any]],
         retrieved: list[dict[str, Any]],
         resolved_refs: list[ResolutionResult],
-        has_current_images: bool,
+        has_current_files: bool,
         prefer_fast: bool,
     ) -> str:
         recent_serialized = [
@@ -600,10 +687,10 @@ class ChatService:
         ]
         resolved_serialized = self._serialize_resolution_results(resolved_refs)
         mode_note = (
-            'Current uploaded images are attached directly to this request. Use the raw images immediately for description, OCR and reasoning. '
-            'Their database enrichment may still be running in parallel, so do not wait for stored OCR or caption if the raw image is enough.'
-            if has_current_images else
-            'No new image is attached in this turn. Use recent memory, resolved references and retrieved context.'
+            'Current uploaded files/images are attached directly to this request. Use the raw formats immediately for reasoning. '
+            'Their database enrichment may still be running in parallel, so do not wait for stored data if raw file is enough.'
+            if has_current_files else
+            'No new file is attached in this turn. Use recent memory, resolved references and retrieved context.'
         )
         speed_note = 'Prefer concise context usage and avoid relying on long retrieved history unless it is clearly relevant.' if prefer_fast else 'Use the available retrieved context when helpful.'
         return (
@@ -617,7 +704,7 @@ class ChatService:
             f'Speed note: {speed_note}\n\n'
             f'Working memory:\n{json.dumps(working_memory, ensure_ascii=False, indent=2)}\n\n'
             f'Recent turns:\n{json.dumps(recent_serialized, ensure_ascii=False, indent=2)}\n\n'
-            f'Current image context:\n{json.dumps(image_summaries, ensure_ascii=False, indent=2)}\n\n'
+            f'Current attached context:\n{json.dumps(file_summaries, ensure_ascii=False, indent=2)}\n\n'
             f'Resolved references:\n{json.dumps(resolved_serialized, ensure_ascii=False, indent=2)}\n\n'
             f'Retrieved context:\n{json.dumps(retrieved, ensure_ascii=False, indent=2)}\n\n'
             f'User question hiện tại: {user_text}'
