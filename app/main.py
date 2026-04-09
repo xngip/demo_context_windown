@@ -21,7 +21,7 @@ from app.services.chat_service import ChatService
 settings = get_settings()
 app = FastAPI(
     title='Multimodal Context Window Demo',
-    version='2.1.0',
+    version='2.2.0',
     default_response_class=ORJSONResponse,
 )
 service = ChatService()
@@ -49,6 +49,19 @@ def root() -> FileResponse:
 @app.get('/health')
 def healthcheck() -> dict:
     return {'ok': True}
+
+
+def _normalize_uploads(files: list[UploadFile] | None) -> list[dict]:
+    uploads = []
+    for file in files or []:
+        uploads.append(
+            {
+                'filename': file.filename,
+                'mime_type': file.content_type,
+                'content': file.file.read(),
+            }
+        )
+    return uploads
 
 
 @app.get('/conversations', response_model=ConversationListResponse)
@@ -139,6 +152,32 @@ async def chat_stream(
             'X-Accel-Buffering': 'no',
         },
     )
+
+
+@app.post('/conversations/{conversation_id}/images/generate', response_model=ChatResponse)
+async def image_generate(
+    conversation_id: UUID,
+    text: Annotated[str | None, Form()] = None,
+    files: Annotated[list[UploadFile] | None, File()] = None,
+):
+    if files and len(files) > 10:
+        raise HTTPException(status_code=400, detail='Bạn chỉ được gửi tối đa 10 tệp 1 lần')
+    uploads = []
+    for file in files or []:
+        uploads.append(
+            {
+                'filename': file.filename,
+                'mime_type': file.content_type,
+                'content': await file.read(),
+            }
+        )
+    try:
+        result = await run_in_threadpool(service.process_image_generation, conversation_id, text, uploads)
+        return ChatResponse(**result)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f'Internal error: {exc}') from exc
 
 
 @app.get('/conversations/{conversation_id}/memory', response_model=MemorySnapshotResponse)

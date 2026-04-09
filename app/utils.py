@@ -136,3 +136,33 @@ def needs_visual_rehydration(text: str) -> bool:
         'chart', 'widget', 'vị trí', 'khác nhau ở đâu', 'so sánh trực quan'
     ]
     return any(t in text for t in triggers)
+
+
+def is_image_edit_request(text: str) -> bool:
+    text = (text or '').lower()
+    triggers = [
+        'sửa ảnh', 'chỉnh ảnh', 'edit ảnh', 'chỉnh sửa ảnh', 'biến ảnh này thành',
+        'xóa nền', 'đổi nền', 'thay nền', 'thêm vào ảnh', 'xóa khỏi ảnh',
+        'crop ảnh', 'cắt ảnh', 'retouch', 'inpaint', 'outpaint'
+    ]
+    return any(t in text for t in triggers)
+
+
+def wants_image_input_debug(text: str) -> bool:
+    text = (text or '').lower()
+    triggers = [
+        'test nạp ảnh', 'debug ảnh', 'ảnh nào được nạp', 'ảnh nào được load',
+        'ảnh nào được đưa vào model', 'đang dùng ảnh nào', 'đang lấy ảnh nào',
+        'test resolve ảnh', 'kiểm tra ảnh đầu vào'
+    ]
+    return any(t in text for t in triggers)
+
+
+def should_attach_resolved_images(text: str, has_resolved_refs: bool) -> bool:
+    if not has_resolved_refs:
+        return False
+    return any([
+        needs_visual_rehydration(text),
+        is_image_edit_request(text),
+        wants_image_input_debug(text),
+    ])

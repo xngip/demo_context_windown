@@ -32,6 +32,7 @@ class ChatResponse(BaseModel):
     resolved_references: list[dict[str, Any]] = Field(default_factory=list)
     retrieved_items: list[dict[str, Any]] = Field(default_factory=list)
     working_memory: dict[str, Any] = Field(default_factory=dict)
+    model_input_images: list[dict[str, Any]] = Field(default_factory=list)
     latency_ms: int = 0
     processing_mode: str = 'standard'
     background_enrichment_started: bool = False

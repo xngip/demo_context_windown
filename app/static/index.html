@@ -5,7 +5,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Multimodal Context Demo</title>
-  <link rel="stylesheet" href="/static/styles.css?v=14" />
+  <link rel="stylesheet" href="/static/styles.css?v=16" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
 </head>
 
 <body>
@@ -49,9 +50,17 @@
       <section id="previewBar" class="preview-bar hidden"></section>
 
       <form id="chatForm" class="composer">
+        <div class="composer-mode-row">
+          <div class="mode-switch" id="modeSwitch">
+            <button type="button" class="mode-btn active" data-mode="chat">Chat</button>
+            <button type="button" class="mode-btn" data-mode="image">Nano Banana 2</button>
+          </div>
+          <div id="composerModeHint" class="composer-mode-hint">Chế độ chat thường để hỏi đáp, OCR, tóm tắt, retrieval và debug context.</div>
+        </div>
+
         <div class="composer-row">
           <textarea id="messageInput"
-            placeholder="Nhập câu hỏi... ví dụ: so sánh ảnh này với ảnh hôm qua hoặc tóm tắt ảnh này"
+            placeholder="Nhập câu hỏi... ví dụ: tóm tắt ảnh này, sửa ảnh này thành phong cách anime, hoặc tạo ảnh poster theo mô tả"
             rows="3"></textarea>
         </div>
         <div class="composer-row composer-actions">
@@ -60,7 +69,7 @@
               <input id="fileInput" name="files" type="file" accept="image/*,.pdf,.txt,.docx,.csv" multiple />
               <span>Thêm file</span>
             </label>
-            <div class="composer-hint">Enter để gửi và Shift Enter để xuống dòng</div>
+            <div class="composer-hint" id="composerHint">Enter để gửi và Shift Enter để xuống dòng</div>
           </div>
           <div class="actions-right">
             <button type="submit" id="sendBtn" class="primary-btn">Gửi</button>
@@ -81,7 +90,9 @@
   </dialog>
 
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-  <script src="/static/app.js?v=14"></script>
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+  <script src="/static/app.js?v=18"></script>
 </body>
 
 </html>

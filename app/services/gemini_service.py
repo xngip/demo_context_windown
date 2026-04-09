@@ -1,3 +1,4 @@
+import base64
 import json
 from typing import Any, Iterator
 
@@ -23,7 +24,7 @@ class GeminiService:
             config={
                 'response_mime_type': 'application/json',
                 'response_json_schema': schema,
-                'temperature': 0.5,
+                'temperature': 0.1,
             },
         )
         parsed = getattr(response, 'parsed', None)
@@ -64,10 +65,53 @@ class GeminiService:
             file_bytes = f.read()
         return types.Part.from_bytes(data=file_bytes, mime_type=mime_type)
 
+    def _extract_response_parts(self, response: Any) -> list[Any]:
+        direct_parts = getattr(response, 'parts', None)
+        if direct_parts:
+            return list(direct_parts)
+
+        parts: list[Any] = []
+        for candidate in getattr(response, 'candidates', None) or []:
+            content = getattr(candidate, 'content', None)
+            candidate_parts = getattr(content, 'parts', None) if content is not None else None
+            if candidate_parts:
+                parts.extend(candidate_parts)
+        return parts
+
+    def _extract_part_text(self, part: Any) -> str | None:
+        text = getattr(part, 'text', None)
+        if text:
+            return str(text)
+        if isinstance(part, dict):
+            value = part.get('text')
+            return str(value) if value else None
+        return None
+
+    def _extract_part_inline_data(self, part: Any) -> tuple[bytes | None, str | None]:
+        inline_data = getattr(part, 'inline_data', None) or getattr(part, 'inlineData', None)
+        if inline_data is None and isinstance(part, dict):
+            inline_data = part.get('inline_data') or part.get('inlineData')
+        if inline_data is None:
+            return None, None
+
+        data = getattr(inline_data, 'data', None)
+        mime_type = getattr(inline_data, 'mime_type', None) or getattr(inline_data, 'mimeType', None)
+        if isinstance(inline_data, dict):
+            data = data or inline_data.get('data')
+            mime_type = mime_type or inline_data.get('mime_type') or inline_data.get('mimeType')
+        if not data:
+            return None, mime_type
+        if isinstance(data, str):
+            try:
+                data = base64.b64decode(data)
+            except Exception:
+                data = data.encode('utf-8')
+        return data, mime_type
+
     def analyze_image(self, file_path: str, mime_type: str) -> dict[str, Any]:
         schema = {
             'type': 'object',
-            'required': ['short_caption', 'detailed_caption', 'ocr_text', 'ocr_text_compressed', 'tags', 'image_type', 'visual_summary'],
+            'required': ['short_caption', 'ocr_text_compressed', 'tags', 'image_type'],
             'properties': {
                 'short_caption': {'type': 'string'},
                 'detailed_caption': {'type': 'string'},
@@ -76,36 +120,80 @@ class GeminiService:
                 'tags': {'type': 'array', 'items': {'type': 'string'}},
                 'image_type': {'type': 'string'},
                 'visual_summary': {'type': 'string'},
-                'entities': {
-                    'type': 'array',
-                    'items': {
-                        'type': 'object',
-                        'properties': {
-                            'name': {'type': 'string'},
-                            'kind': {'type': 'string'},
-                        },
-                        'required': ['name', 'kind'],
-                    },
-                },
             },
         }
         prompt = (
-            'Phân tích ảnh cho hệ thống quản lý ngữ cảnh đa phương thức. '
-            'Trả về JSON với caption ngắn, caption chi tiết, OCR đầy đủ, OCR rút gọn, tags, image_type, visual_summary, entities. '
-            'image_type chỉ chọn một giá trị gần nhất trong nhóm: dashboard, screenshot, document, photo, chart, ui, receipt, other. '
-            'OCR rút gọn phải giữ lại các chữ, số, tên riêng và từ khóa quan trọng nhất.'
+            'Analyze the provided image and return a JSON response.\n'
+            '- short_caption: A concise description.\n'
+            '- ocr_text_compressed: Key text visible in the image.\n'
+            '- tags: Keywords.\n'
+            '- image_type: dashboard, screenshot, document, photo, chart, ui, receipt, other.'
         )
         result = self._generate_json(prompt, schema, parts=[self.file_part_from_path(file_path, mime_type)])
-        result['ocr_text'] = compact_text(result.get('ocr_text', ''), max_chars=4000)
         result['ocr_text_compressed'] = compact_text(result.get('ocr_text_compressed', ''), max_chars=self.settings.max_ocr_chars)
         result['textual_memory'] = '\n'.join([
             result.get('short_caption', ''),
-            result.get('detailed_caption', ''),
             f"OCR: {result.get('ocr_text_compressed', '')}",
             f"Tags: {', '.join(result.get('tags', []))}",
         ]).strip()
         result['embedding'] = self.embed_text(result['textual_memory'])
         return result
+
+    def batch_analyze_images(self, image_jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Analyze multiple images in a single LLM call for better performance."""
+        if not image_jobs:
+            return []
+            
+        schema = {
+            'type': 'object',
+            'required': ['analyses'],
+            'properties': {
+                'analyses': {
+                    'type': 'array',
+                    'items': {
+                        'type': 'object',
+                        'required': ['image_id', 'short_caption', 'ocr_text_compressed', 'tags', 'image_type'],
+                        'properties': {
+                            'image_id': {'type': 'string'},
+                            'short_caption': {'type': 'string'},
+                            'ocr_text_compressed': {'type': 'string'},
+                            'tags': {'type': 'array', 'items': {'type': 'string'}},
+                            'image_type': {'type': 'string'},
+                        }
+                    }
+                }
+            }
+        }
+        
+        prompt = (
+            'You are an expert image analyst. Analyze the provided images and return a list of JSON analyses.\n'
+            'For each image (identified by its provided ID), provide:\n'
+            '- image_id: The exact ID provided for this image.\n'
+            '- short_caption: A concise one-sentence description.\n'
+            '- ocr_text_compressed: Key facts, numbers, and headings from any text in the image.\n'
+            '- tags: Relevant keywords.\n'
+            '- image_type: Choose from: dashboard, screenshot, document, photo, chart, ui, receipt, other.'
+        )
+        
+        parts = []
+        for job in image_jobs:
+            parts.append(types.Part.from_text(text=f"Image ID: {job['image_id']}"))
+            parts.append(self.file_part_from_path(job['file_path'], job['mime_type']))
+            
+        response_data = self._generate_json(prompt, schema, parts=parts)
+        analyses = response_data.get('analyses', [])
+        
+        # Post-process results (add embeddings and memory text)
+        for analysis in analyses:
+            analysis['ocr_text_compressed'] = compact_text(analysis.get('ocr_text_compressed', ''), max_chars=self.settings.max_ocr_chars)
+            analysis['textual_memory'] = '\n'.join([
+                analysis.get('short_caption', ''),
+                f"OCR: {analysis.get('ocr_text_compressed', '')}",
+                f"Tags: {', '.join(analysis.get('tags', []))}",
+            ]).strip()
+            analysis['embedding'] = self.embed_text(analysis['textual_memory'])
+            
+        return analyses
 
     def analyze_document(self, file_path: str, mime_type: str) -> dict[str, Any]:
         schema = {
@@ -129,9 +217,11 @@ class GeminiService:
             },
         }
         prompt = (
-            'Phân tích tài liệu cho hệ thống quản lý ngữ cảnh đa phương thức. '
-            'Trả về JSON với: summary (tóm tắt ý chính tài liệu), extracted_text (nội dung text, ưu tiên giữ thông tin quan trọng rút gọn nếu quá dài), '
-            'tags (các từ khóa), entities (thực thể quan trọng có name, kind). '
+            'You are an expert document analyst. Read the provided document carefully and analyze it thoroughly.\n'
+            '- summary: A concise summary of the main points, core arguments, and key conclusions (3-6 sentences).\n'
+            '- extracted_text: Extract the most important content — prioritize preserving key passages, statistics, definitions, and conclusions. Condense if the document is very long.\n'
+            '- tags: Up to 10 keywords reflecting the topic, domain, and main content.\n'
+            '- entities: Important entities found in the document (people, organizations, locations, products...) with name and kind.'
         )
         result = self._generate_json(prompt, schema, parts=[self.file_part_from_path(file_path, mime_type)])
         result['extracted_text'] = compact_text(result.get('extracted_text', ''), max_chars=8000)
@@ -150,8 +240,12 @@ class GeminiService:
             'properties': {'summary': {'type': 'string'}},
         }
         prompt = (
-            'Tóm tắt ngắn gọn một lượt hội thoại cho long term memory. '
-            'Giữ các dữ kiện quan trọng, task hiện tại, ảnh được nhắc tới và kết luận đã trả lời.\n\n'
+            'Summarize this conversation turn for long-term memory storage. Requirements:\n'
+            '- Extract specific facts, conclusions reached, and the current task status.\n'
+            '- Note if any images were generated, edited, or analyzed.\n'
+            '- Record the user\'s question and the key points of the assistant\'s answer.\n'
+            '- The summary must be self-contained — someone reading it later should fully understand this turn without seeing the original conversation.\n'
+            '- Maximum 3 sentences, concise and accurate.\n\n'
             f'User: {user_text}\nAssistant: {answer_text}'
         )
         result = self._generate_json(prompt, schema)
@@ -183,10 +277,15 @@ class GeminiService:
             },
         }
         prompt = (
-            'Cập nhật working memory cho hệ thống hội thoại đa phương thức sau khi assistant đã trả lời. '
-            'Chỉ giữ unresolved_questions là những câu hỏi thực sự CHƯA được giải quyết trong câu trả lời hiện tại. '
-            'Hãy gọn, không nhắc lại toàn bộ lịch sử. current_focus nên chỉ rõ focus_type, primary_image_ids và lý do tập trung hiện tại nếu có. '
-            'decisions chỉ nên giữ các kết luận đã chốt.\n\n'
+            'Update the working memory after the assistant has responded. Rules:\n'
+            '- user_goal: The user\'s overall goal for this session (do not change unless there is a clear topic shift).\n'
+            '- current_task: The most specific task the user just requested or is waiting on.\n'
+            '- current_focus: Clearly state focus_type, primary_image_ids if working with images, and keep the focus reason brief.\n'
+            '- active_image_ids: List of image IDs currently being referenced or just generated, prioritizing the most recent ones.\n'
+            '- constraints: Explicit constraints the user has stated (style, format, limits...).\n'
+            '- decisions: Keep only conclusions that have been confirmed and finalized — do not repeat already-resolved items.\n'
+            '- unresolved_questions: ONLY list questions or requests that the current answer has NOT yet resolved.\n'
+            '- summary_buffer: A brief summary of conversation progress so far (maximum 3 sentences).\n\n'
             f'Previous memory: {json.dumps(previous_memory, ensure_ascii=False)}\n\n'
             f'New user text: {user_text}\n\n'
             f'Assistant answer: {assistant_answer}\n\n'
@@ -224,3 +323,73 @@ class GeminiService:
             answer = self.answer(prompt=prompt, image_parts=image_parts)
             if answer:
                 yield answer
+
+    def resolve_image_references(
+        self,
+        user_text: str,
+        recent_history: list[dict],
+        image_catalog: list[dict],
+        current_image_ids: list[str],
+    ) -> dict[str, Any]:
+        schema = {
+            'type': 'object',
+            'required': ['selected_image_ids', 'reasoning'],
+            'properties': {
+                'selected_image_ids': {'type': 'array', 'items': {'type': 'string'}},
+                'reasoning': {'type': 'string'},
+            },
+        }
+        prompt = (
+            "You are an expert image reference resolver for a multimodal chat system.\n"
+            "Your goal is to identify which image IDs from the 'Image Catalog' the user is referring to in their 'User Request'.\n\n"
+
+            "INPUT DATA:\n"
+            f"1. User Request: {user_text}\n"
+            f"2. Current Turn Images: {json.dumps(current_image_ids)}\n"
+            f"3. Recent Chat History: {json.dumps(recent_history, ensure_ascii=False)}\n"
+            f"4. Image Catalog: {json.dumps(image_catalog, ensure_ascii=False)}\n\n"
+
+            "RULES:\n"
+            "- Analyze the chat history and the catalog carefully. The user might describe the image content, its origin (e.g., 'the image you created'), its timing (e.g., 'the first one'), or its relationship to others (e.g., 'the edited version').\n"
+            "- Only select image IDs that are explicitly or strongly implicitly requested. If the user refers to images just uploaded in the current turn (Current Turn Images), you may include them if relevant, but prioritize identifying historical images if described.\n"
+            "- ALWAYS return a JSON object with 'selected_image_ids' (list of UUID strings) and 'reasoning' (brief Vietnamese explanation).\n"
+            "- If no historical images are being referred to, return an empty list for 'selected_image_ids'.\n"
+            "- ONLY use image IDs present in the Image Catalog.\n"
+        )
+        return self._generate_json(prompt, schema)
+
+    def generate_or_edit_image(self, instruction: str, image_parts: list[Any] | None = None) -> dict[str, Any]:
+        contents: list[Any] = [instruction]
+        if image_parts:
+            contents.extend(image_parts)
+
+        response = self.client.models.generate_content(
+            model=self.settings.image_generation_model,
+            contents=contents,
+            config=types.GenerateContentConfig(
+                temperature=0.7,
+                response_modalities=['TEXT', 'IMAGE'],
+            ),
+        )
+
+        text_chunks: list[str] = []
+        images: list[dict[str, Any]] = []
+        for part in self._extract_response_parts(response):
+            text = self._extract_part_text(part)
+            if text:
+                text_chunks.append(text.strip())
+            data, mime_type = self._extract_part_inline_data(part)
+            if data:
+                images.append({
+                    'bytes': data,
+                    'mime_type': mime_type or 'image/png',
+                })
+
+        fallback_text = getattr(response, 'text', '') or ''
+        if not text_chunks and fallback_text:
+            text_chunks.append(fallback_text.strip())
+
+        return {
+            'text': '\n'.join(chunk for chunk in text_chunks if chunk).strip(),
+            'images': images[: self.settings.max_generated_images_per_turn],
+        }

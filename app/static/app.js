@@ -3,6 +3,8 @@ const state = {
   activeConversationId: null,
   selectedFiles: [],
   backgroundPollTimer: null,
+  backgroundPollAttempts: 0,
+  composerMode: 'chat',
 };
 
 const els = {
@@ -23,6 +25,9 @@ const els = {
   refreshBtn: document.getElementById('refreshBtn'),
   sendBtn: document.getElementById('sendBtn'),
   statusBar: document.getElementById('statusBar'),
+  modeSwitch: document.getElementById('modeSwitch'),
+  composerModeHint: document.getElementById('composerModeHint'),
+  composerHint: document.getElementById('composerHint'),
 };
 
 class Typewriter {
@@ -62,17 +67,18 @@ class Typewriter {
 
       this.currentText = (this.currentText || '') + this.queue[0];
       this.element.innerHTML = parseMarkdown(this.currentText);
+      renderMath(this.element);
       this.queue = this.queue.slice(1);
-      
+
       if (chatContainer && isAtBottom) {
         chatContainer.scrollTop = chatContainer.scrollHeight;
       }
-      
+
       let delay = this.speed;
       const lastChar = this.currentText.slice(-1);
       if (['.', '!', '?', '\n'].includes(lastChar)) delay += 20;
       else if ([',', ';'].includes(lastChar)) delay += 10;
-      
+
       setTimeout(() => this.type(), delay);
     } else {
       this.isTyping = false;
@@ -123,9 +129,8 @@ function parseMarkdown(text) {
   if (typeof window.marked !== 'undefined') {
     if (typeof window.marked.parse === 'function') {
       return window.marked.parse(text || '', { breaks: true, gfm: true });
-    } else {
-      return window.marked(text || '', { breaks: true, gfm: true });
     }
+    return window.marked(text || '', { breaks: true, gfm: true });
   }
   let html = escapeHtml(text);
   html = html.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
@@ -133,6 +138,41 @@ function parseMarkdown(text) {
   html = html.replace(/\*\*([^\*]+)\*\*/g, '<strong>$1</strong>');
   html = html.replace(/\*([^\*]+)\*/g, '<em>$1</em>');
   return html;
+}
+
+function renderMath(element) {
+  if (!element || typeof window.renderMathInElement !== 'function') return;
+  try {
+    window.renderMathInElement(element, {
+      delimiters: [
+        { left: '$$', right: '$$', display: true },
+        { left: '$', right: '$', display: false },
+        { left: '\\(', right: '\\)', display: false },
+        { left: '\\[', right: '\\]', display: true },
+      ],
+      throwOnError: false,
+    });
+  } catch (e) {
+    // silently ignore KaTeX errors
+  }
+}
+
+function setComposerMode(mode) {
+  state.composerMode = mode;
+  const buttons = els.modeSwitch?.querySelectorAll('.mode-btn') || [];
+  buttons.forEach((btn) => btn.classList.toggle('active', btn.dataset.mode === mode));
+
+  if (mode === 'image') {
+    els.messageInput.placeholder = 'Mô tả ảnh cần tạo, hoặc nhập ví dụ: sửa ảnh 2 thành poster tối giản, giữ khuôn mặt gốc';
+    els.composerModeHint.textContent = 'Chế độ Nano Banana 2: tạo ảnh mới hoặc chỉnh ảnh từ ảnh vừa upload hay ảnh đã có trong lịch sử hội thoại.';
+    els.composerHint.textContent = 'Ở chế độ này chỉ nhận ảnh tham chiếu. Ví dụ: “sửa ảnh 3”, “lấy ảnh gốc thứ 2 rồi đổi nền”.';
+    els.fileInput.accept = 'image/*';
+  } else {
+    els.messageInput.placeholder = 'Nhập câu hỏi... ví dụ: tóm tắt ảnh này, sửa ảnh này thành phong cách anime, hoặc tạo ảnh poster theo mô tả';
+    els.composerModeHint.textContent = 'Chế độ chat thường để hỏi đáp, OCR, tóm tắt, retrieval và debug context.';
+    els.composerHint.textContent = 'Enter để gửi và Shift Enter để xuống dòng';
+    els.fileInput.accept = 'image/*,.pdf,.txt,.docx,.csv';
+  }
 }
 
 function renderConversationList() {
@@ -154,20 +194,24 @@ function renderConversationList() {
   }
 }
 
-function buildChips(msg) {
-  const meta = msg.metadata || {};
-  const chips = [];
-  if (meta.latency_ms) chips.push(`<span class="chip ok">${meta.latency_ms} ms</span>`);
-  if (meta.processing_mode) chips.push(`<span class="chip">${meta.processing_mode}</span>`);
-  if (meta.streaming_enabled) chips.push('<span class="chip ok">stream</span>');
-  if (meta.background_enrichment_pending) chips.push('<span class="chip warn">Đang enrich memory</span>');
-  if (Array.isArray(meta.resolved_references) && meta.resolved_references.length) {
-    chips.push(`<span class="chip">Resolve ${meta.resolved_references.length}</span>`);
-  }
-  if (Array.isArray(meta.retrieved_items) && meta.retrieved_items.length) {
-    chips.push(`<span class="chip">Retrieve ${meta.retrieved_items.length}</span>`);
-  }
-  return chips.join('');
+function renderImageAttachment(img) {
+  const sourceBadge = img.source_kind === 'assistant_generated'
+    ? '<span class="image-badge generated">Nano Banana 2</span>'
+    : '<span class="image-badge uploaded">User upload</span>';
+  const editBadge = img.edit_generation_index ? `<span class="image-badge generated">Bản #${img.edit_generation_index}</span>` : '';
+  const caption = img.display_label || img.short_caption || img.image_type || 'image';
+  const processingHint = img.processing_status === 'pending' ? ' · đang phân tích' : '';
+
+  return `
+    <div class="message-image-card">
+      <img src="${img.url}" alt="${caption}" />
+      <div class="image-caption">${caption}${processingHint}</div>
+      <div class="image-meta-row">
+        ${sourceBadge}
+        ${editBadge}
+      </div>
+    </div>
+  `;
 }
 
 function renderMessages(detail) {
@@ -187,12 +231,26 @@ function renderMessages(detail) {
 
     const div = document.createElement('article');
     div.className = `message ${msg.role}`;
-    const imagesHtml = (msg.images || []).map((img) => `
-      <div>
-        <img src="${img.url}" alt="${img.short_caption || 'image'}" />
-        <div class="image-caption">${img.short_caption || img.image_type || 'image'}${img.processing_status === 'pending' ? ' · đang phân tích' : ''}</div>
-      </div>
-    `).join('');
+    const imagesHtml = (msg.images || []).map(renderImageAttachment).join('');
+
+    const debugInputs = Array.isArray(meta.model_input_images) ? meta.model_input_images : [];
+    const debugHtml = debugInputs.length ? `
+      <details class="debug-block">
+        <summary>Ảnh được nạp vào model (${debugInputs.length})</summary>
+        <div class="debug-list">
+          ${debugInputs.map((item, idx) => `
+            <div class="debug-item">
+              <strong>#${idx + 1}</strong>
+              <span>ID: ${item.image_id || 'n/a'}</span>
+              <span>Nguồn: ${item.source_kind || 'unknown'}</span>
+              <span>Lý do: ${item.reason || 'n/a'}</span>
+              ${item.edit_generation_index ? `<span>Bản: ${item.edit_generation_index}</span>` : ''}
+              ${item.resolution_type ? `<span>Resolve: ${item.resolution_type}</span>` : ''}
+            </div>
+          `).join('')}
+        </div>
+      </details>
+    ` : '';
 
     const docsHtml = (msg.documents || []).map((doc) => `
       <div class="document-attachment">
@@ -211,7 +269,10 @@ function renderMessages(detail) {
       <div class="message-text">${parseMarkdown(msg.text || '')}</div>
       ${imagesHtml ? `<div class="message-images">${imagesHtml}</div>` : ''}
       ${docsHtml ? `<div class="message-documents">${docsHtml}</div>` : ''}
+      ${debugHtml}
     `;
+    const textEl = div.querySelector('.message-text');
+    if (textEl) renderMath(textEl);
     els.messageList.appendChild(div);
   }
   els.messageList.scrollTop = els.messageList.scrollHeight;
@@ -255,18 +316,18 @@ function renderPreview() {
   state.selectedFiles.forEach((file, index) => {
     const wrap = document.createElement('div');
     wrap.className = 'preview-item';
-    
+
     if (file.type.startsWith('image/')) {
-        const img = document.createElement('img');
-        img.src = URL.createObjectURL(file);
-        wrap.appendChild(img);
+      const img = document.createElement('img');
+      img.src = URL.createObjectURL(file);
+      wrap.appendChild(img);
     } else {
-        const docIcon = document.createElement('div');
-        docIcon.className = 'preview-doc-icon';
-        docIcon.textContent = '📄 ' + trimText(file.name, 15);
-        wrap.appendChild(docIcon);
+      const docIcon = document.createElement('div');
+      docIcon.className = 'preview-doc-icon';
+      docIcon.textContent = '📄 ' + trimText(file.name, 15);
+      wrap.appendChild(docIcon);
     }
-    
+
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.textContent = '×';
@@ -291,14 +352,15 @@ function appendOptimisticUserMessage(text, files) {
   els.messageList.classList.remove('empty-state');
   const user = document.createElement('article');
   user.className = 'message user';
-  
-  const imgFiles = files.filter(f => f.type.startsWith('image/'));
-  const docFiles = files.filter(f => !f.type.startsWith('image/'));
+
+  const imgFiles = files.filter((f) => f.type.startsWith('image/'));
+  const docFiles = files.filter((f) => !f.type.startsWith('image/'));
 
   const previewImages = imgFiles.map((file) => `
-    <div>
+    <div class="message-image-card">
       <img src="${URL.createObjectURL(file)}" alt="preview" />
       <div class="image-caption">${file.name}</div>
+      <div class="image-meta-row"><span class="image-badge uploaded">current upload</span></div>
     </div>
   `).join('');
 
@@ -311,11 +373,16 @@ function appendOptimisticUserMessage(text, files) {
       </div>
   `).join('');
 
+  const modeLine = state.composerMode === 'image'
+    ? '<div class="meta-chips"><span class="chip ok">Nano Banana 2 mode</span></div>'
+    : '';
+
   user.innerHTML = `
     <div class="message-header">
       <strong>Bạn</strong>
     </div>
     <div class="message-text">${parseMarkdown(text || '')}</div>
+    ${modeLine}
     ${previewImages ? `<div class="message-images">${previewImages}</div>` : ''}
     ${previewDocs ? `<div class="message-documents">${previewDocs}</div>` : ''}
   `;
@@ -323,13 +390,13 @@ function appendOptimisticUserMessage(text, files) {
   els.messageList.scrollTop = els.messageList.scrollHeight;
 }
 
-function createStreamingAssistantBubble() {
+function createStreamingAssistantBubble(label = 'Assistant') {
   const pending = document.createElement('article');
   pending.className = 'message assistant pending streaming';
   pending.id = 'pendingAssistant';
   pending.innerHTML = `
     <div class="message-header">
-      <strong>Assistant</strong>
+      <strong>${label}</strong>
     </div>
     <div class="message-text"></div>
   `;
@@ -338,27 +405,43 @@ function createStreamingAssistantBubble() {
   return pending;
 }
 
-function clearPendingAssistant() {
-  const pending = document.getElementById('pendingAssistant');
-  if (pending) pending.remove();
-}
+// Exponential backoff delays (ms): check lần 1 sau 8s, lần 2 sau 20s, lần 3 sau 35s
+const BG_REFRESH_DELAYS = [8000, 20000, 35000];
 
 function scheduleBackgroundRefresh() {
   if (state.backgroundPollTimer || !state.activeConversationId) return;
-  state.backgroundPollTimer = setInterval(async () => {
+  if (state.backgroundPollAttempts >= BG_REFRESH_DELAYS.length) return; // đã hết lượt
+
+  const delay = BG_REFRESH_DELAYS[state.backgroundPollAttempts];
+  state.backgroundPollTimer = setTimeout(async () => {
+    state.backgroundPollTimer = null;
+    if (!state.activeConversationId || els.sendBtn.disabled) return;
+
     try {
-      await loadConversation(state.activeConversationId);
+      const detail = await api(`/conversations/${state.activeConversationId}`);
+      const stillPending = (detail.messages || []).some(
+        (m) => (m.metadata || {}).background_enrichment_pending
+      );
+      if (!stillPending) {
+        renderMessages(detail);
+        setStatus('');
+        state.backgroundPollAttempts = 0;
+      } else {
+        state.backgroundPollAttempts += 1;
+        scheduleBackgroundRefresh(); // thử lần tiếp theo với delay lớn hơn
+      }
     } catch {
-      clearBackgroundRefresh();
+      state.backgroundPollAttempts = 0;
     }
-  }, 2500);
+  }, delay);
 }
 
 function clearBackgroundRefresh() {
   if (state.backgroundPollTimer) {
-    clearInterval(state.backgroundPollTimer);
+    clearTimeout(state.backgroundPollTimer);
     state.backgroundPollTimer = null;
   }
+  state.backgroundPollAttempts = 0;
 }
 
 function parseSseEvent(block) {
@@ -398,7 +481,7 @@ async function streamChat(formData, bubble) {
   let buffer = '';
   let finalResult = null;
   const textEl = bubble.querySelector('.message-text');
-  
+
   const typewriter = new Typewriter(textEl, 2);
 
   while (true) {
@@ -432,6 +515,20 @@ async function streamChat(formData, bubble) {
   });
 }
 
+async function runImageMode(formData, bubble) {
+  const textEl = bubble.querySelector('.message-text');
+  textEl.innerHTML = parseMarkdown('Đang gửi yêu cầu sang Nano Banana 2...');
+  setStatus('Nano Banana 2 đang tạo hoặc chỉnh ảnh...', 'info');
+  const result = await api(`/conversations/${state.activeConversationId}/images/generate`, {
+    method: 'POST',
+    body: formData,
+  });
+  const message = result?.answer || 'Đã nhận kết quả ảnh.';
+  textEl.innerHTML = parseMarkdown(message);
+  renderMath(textEl);
+  return result;
+}
+
 async function sendMessage(event) {
   event.preventDefault();
   const text = els.messageInput.value.trim();
@@ -447,25 +544,36 @@ async function sendMessage(event) {
 
   els.sendBtn.disabled = true;
   appendOptimisticUserMessage(text, selectedFiles);
-  const bubble = createStreamingAssistantBubble();
+  const bubble = createStreamingAssistantBubble(state.composerMode === 'image' ? 'Nano Banana 2' : 'Assistant');
 
   els.messageInput.value = '';
   state.selectedFiles = [];
   renderPreview();
 
   try {
-    const result = await streamChat(formData, bubble);
+    let result;
+    if (state.composerMode === 'image') {
+      result = await runImageMode(formData, bubble);
+    } else {
+      result = await streamChat(formData, bubble);
+    }
+
     await loadConversations();
     await loadConversation(state.activeConversationId);
+
     const latency = result?.latency_ms || 0;
     const pending = result?.background_enrichment_started ? ' Memory tiếp tục enrich ở nền.' : '';
-    setStatus(`Đã stream xong trong khoảng ${latency} ms.${pending}`, 'info');
+    if (state.composerMode === 'image') {
+      setStatus(`Nano Banana 2 đã xử lý xong trong khoảng ${latency} ms.${pending}`, 'info');
+    } else {
+      setStatus(`Đã stream xong trong khoảng ${latency} ms.${pending}`, 'info');
+    }
     if (result?.background_enrichment_started) scheduleBackgroundRefresh();
   } catch (error) {
     bubble.classList.remove('pending', 'streaming');
     bubble.classList.add('error-text');
     bubble.querySelector('.message-text').textContent = `Lỗi: ${error.message}`;
-    setStatus('Có lỗi khi stream câu trả lời.', 'error');
+    setStatus('Có lỗi khi xử lý yêu cầu.', 'error');
   } finally {
     els.sendBtn.disabled = false;
   }
@@ -491,7 +599,15 @@ els.messageInput.addEventListener('keydown', (event) => {
   }
 });
 els.fileInput.addEventListener('change', (event) => {
-  const files = Array.from(event.target.files || []);
+  let files = Array.from(event.target.files || []);
+  if (state.composerMode === 'image') {
+    const invalidFiles = files.filter((file) => !file.type.startsWith('image/'));
+    if (invalidFiles.length) {
+      alert('Ở chế độ Nano Banana 2, bạn chỉ có thể upload ảnh tham chiếu.');
+    }
+    files = files.filter((file) => file.type.startsWith('image/'));
+  }
+
   const availableSlots = 10 - state.selectedFiles.length;
   if (files.length > availableSlots) {
     alert('Bạn chỉ được gửi tối đa 10 tệp 1 lần.');
@@ -534,6 +650,11 @@ els.refreshBtn.addEventListener('click', async () => {
   if (state.activeConversationId) await loadConversation(state.activeConversationId);
 });
 
+els.modeSwitch?.querySelectorAll('.mode-btn').forEach((btn) => {
+  btn.addEventListener('click', () => setComposerMode(btn.dataset.mode));
+});
+
+setComposerMode('chat');
 loadConversations().catch((error) => {
   els.messageList.classList.remove('empty-state');
   els.messageList.innerHTML = `<div class="error-text">Không tải được dữ liệu: ${error.message}</div>`;

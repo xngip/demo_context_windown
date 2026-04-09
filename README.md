@@ -157,6 +157,35 @@ curl -X POST \
 curl http://127.0.0.1:8000/conversations/<CONVERSATION_ID>/memory
 ```
 
+
+## 4b. Chế độ Nano Banana 2
+
+### Tạo ảnh mới hoặc chỉnh ảnh từ lịch sử hội thoại
+
+```bash
+curl -X POST   http://127.0.0.1:8000/conversations/<CONVERSATION_ID>/images/generate   -F "text=tạo poster cyberpunk với mèo phi hành gia"
+```
+
+### Chỉnh ảnh bằng ảnh upload mới làm nguồn
+
+```bash
+curl -X POST   http://127.0.0.1:8000/conversations/<CONVERSATION_ID>/images/generate   -F "text=giữ bố cục chính nhưng đổi nền thành hoàng hôn và làm kiểu poster"   -F "files=@/absolute/path/to/image.png"
+```
+
+### Chỉnh lại ảnh cũ qua context window
+
+Ví dụ sau khi user đã gửi 5 ảnh ở 5 turn khác nhau hoặc đã có nhiều vòng chỉnh sửa, có thể gọi
+
+```bash
+curl -X POST   http://127.0.0.1:8000/conversations/<CONVERSATION_ID>/images/generate   -F "text=sửa ảnh 2, giữ chủ thể chính nhưng đổi thành phong cách tối giản"
+```
+
+Hoặc nếu đã có một chuỗi edit và user muốn quay lại bản thứ 3
+
+```bash
+curl -X POST   http://127.0.0.1:8000/conversations/<CONVERSATION_ID>/images/generate   -F "text=sửa ảnh 3 theo phong cách cinematic, giữ gương mặt như cũ"
+```
+
 ## 5. Hành vi tối ưu mới
 
 ### Khi không có ảnh
@@ -171,6 +200,14 @@ curl http://127.0.0.1:8000/conversations/<CONVERSATION_ID>/memory
 - Assistant trả lời ngay bằng ảnh attach trực tiếp
 - Phân tích ảnh caption OCR tags embedding chạy ở nền
 - Memory snapshot và image metadata sẽ đầy đủ hơn sau một lúc ngắn
+
+
+### Khi bật chế độ Nano Banana 2
+- Có nút mode riêng ở ô nhập để chuyển giữa Chat và Nano Banana 2
+- Ở mode này backend luôn sẵn sàng cho generate hoặc edit ảnh
+- Nếu user upload ảnh mới thì ảnh đó được ưu tiên làm nguồn chỉnh sửa
+- Nếu user không upload ảnh nhưng yêu cầu như `sửa ảnh 2` hoặc `sửa ảnh 3` thì resolver sẽ cố resolve ảnh theo lịch sử hội thoại và lineage chỉnh sửa
+- Ảnh do assistant tạo ra được lưu lại như image asset bình thường để các turn sau có thể tiếp tục tham chiếu
 
 ### Khi câu hỏi cần so sánh trực quan
 Các trigger như bố cục layout màu sắc giao diện cấu trúc biểu đồ sẽ làm hệ thống rehydrate ảnh cũ vào prompt nếu resolve được ảnh mục tiêu.
